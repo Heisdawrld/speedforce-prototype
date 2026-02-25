@@ -1,6 +1,6 @@
 from flask import Flask, render_template_string, request
 import requests
-import os  # Moved to top to avoid 'undefined' errors
+import os
 from match_predictor import BSD_TOKEN, BASE_URL, get_match_analysis
 
 app = Flask(__name__)
@@ -25,6 +25,10 @@ LAYOUT = """
 </body>
 """
 
+def get_badge(name):
+    # Returns a stylish initials-based badge for each team
+    return f"https://api.dicebear.com/7.x/initials/svg?seed={name}&backgroundColor=10141d&fontSize=45&bold=true"
+
 @app.route("/")
 def home():
     headers = {'Authorization': f'Token {BSD_TOKEN}'}
@@ -38,8 +42,7 @@ def home():
 
     leagues = {}
     for m in matches:
-        e = m.get('event', {})
-        lname = e.get('league_name') or "Active Leagues"
+        lname = m.get('event', {}).get('league_name') or "Active Leagues"
         if lname not in leagues: leagues[lname] = []
         leagues[lname].append(m)
 
@@ -50,12 +53,20 @@ def home():
         for m in m_list:
             e = m.get('event', {})
             m_id = str(m.get('id'))
+            h_team, a_team = e.get('home_team', 'Home'), e.get('away_team', 'Away')
             status = '<div class="flex items-center gap-2 text-[9px] text-red-500 font-black italic px-4 uppercase tracking-tighter"><span class="pulse-red w-1.5 h-1.5 bg-red-500 rounded-full"></span> LIVE</div>' if m_id in live_ids else '<div class="text-[9px] text-zinc-900 font-black italic px-4 uppercase tracking-tighter text-center italic">ANALYZE</div>'
+            
             content += f'''
             <a href="/match?id={m_id}" class="flex justify-between items-center p-6 bg-[#0f1218] rounded-2xl mb-2 border border-white/5 hover:border-green-500/30 transition group shadow-xl">
-                <div class="w-2/5 text-right font-bold text-white text-sm group-hover:text-green-400 uppercase">{e.get('home_team', 'Home')}</div>
+                <div class="w-2/5 flex items-center justify-end gap-3 font-bold text-white text-sm group-hover:text-green-400 uppercase">
+                    <span class="truncate">{h_team}</span>
+                    <img src="{get_badge(h_team)}" class="w-6 h-6 rounded-full border border-white/10 flex-shrink-0">
+                </div>
                 {status}
-                <div class="w-2/5 text-left font-bold text-white text-sm group-hover:text-green-400 uppercase">{e.get('away_team', 'Away')}</div>
+                <div class="w-2/5 flex items-center justify-start gap-3 font-bold text-white text-sm group-hover:text-green-400 uppercase">
+                    <img src="{get_badge(a_team)}" class="w-6 h-6 rounded-full border border-white/10 flex-shrink-0">
+                    <span class="truncate">{a_team}</span>
+                </div>
             </a>'''
     return render_template_string(LAYOUT, content=content)
 
@@ -73,10 +84,21 @@ def match():
         <div class="flex gap-2">
             <span class="text-[9px] font-black uppercase bg-zinc-900 px-3 py-1 rounded-full italic border border-white/10 {diff_color}">Difficulty: {res['difficulty']}</span>
             <span class="text-[9px] font-black uppercase bg-zinc-900 px-3 py-1 rounded-full italic border border-white/10">Volatility: {res['intel']['volatility']}</span>
-            <span class="text-[9px] font-black uppercase bg-zinc-900 px-3 py-1 rounded-full italic border border-white/10 text-orange-500">Pressure: {res['intel']['pressure']}</span>
+        </div>
+    </div>
+    <div class="flex justify-center items-center gap-6 mb-10">
+        <div class="text-center">
+            <img src="{get_badge(res['h_name'])}" class="w-16 h-16 rounded-full border-2 border-white/5 mx-auto mb-2 shadow-2xl">
+            <p class="text-[10px] font-black text-zinc-500 uppercase tracking-tighter">{res['h_name']}</p>
+        </div>
+        <div class="text-zinc-800 font-black italic text-2xl tracking-tighter">VS</div>
+        <div class="text-center">
+            <img src="{get_badge(res['a_name'])}" class="w-16 h-16 rounded-full border-2 border-white/5 mx-auto mb-2 shadow-2xl">
+            <p class="text-[10px] font-black text-zinc-500 uppercase tracking-tighter">{res['a_name']}</p>
         </div>
     </div>
     '''
+    
     if res.get('live_status'):
         ls = res['live_status']
         content += f'''
@@ -99,14 +121,6 @@ def match():
             </ul>
         </div>
         <div class="space-y-6">
-            <div class="bg-[#0f1218] p-8 rounded-[2.5rem] border border-white/5 shadow-xl text-center">
-                <h4 class="text-[9px] font-black uppercase text-zinc-600 mb-6 tracking-widest italic underline decoration-zinc-800">Team Momentum</h4>
-                <div class="flex justify-between items-center text-center px-4">
-                    <div class="flex-1"><p class="text-[8px] uppercase font-bold text-zinc-700 mb-2 truncate">{res['h_name']}</p><p class="text-2xl font-black text-white italic">{res['h_mom']}</p></div>
-                    <div class="px-2 text-zinc-900 font-black italic">VS</div>
-                    <div class="flex-1"><p class="text-[8px] uppercase font-bold text-zinc-700 mb-2 truncate">{res['a_name']}</p><p class="text-2xl font-black text-white italic">{res['a_mom']}</p></div>
-                </div>
-            </div>
             <div class="bg-[#0f1218] p-8 rounded-[2.5rem] border border-white/5 shadow-xl">
                 <h4 class="text-[9px] font-black uppercase text-zinc-600 mb-6 tracking-widest italic text-center underline decoration-zinc-800">Market Intelligence</h4>
                 <div class="space-y-5">
@@ -140,12 +154,14 @@ def acca():
             for b in bankers:
                 content += f'''
                 <div class="flex justify-between items-center py-6 border-b border-white/5 last:border-0">
-                    <div><span class="text-xs font-black text-white uppercase italic">{b['e'].get('home_team')} vs {b['e'].get('away_team')}</span></div>
+                    <div class="flex items-center gap-3">
+                        <img src="{get_badge(b['e'].get('home_team'))}" class="w-5 h-5 rounded-full">
+                        <span class="text-xs font-black text-white uppercase italic">{b['e'].get('home_team')} vs {b['e'].get('away_team')}</span>
+                    </div>
                     <div class="text-right"><span class="text-sm font-black text-green-500 italic uppercase">{b['t']}</span><p class="text-[9px] text-zinc-800 font-black">{b['c']:.0f}% CONF</p></div>
                 </div>'''
         content += '</div>'
         return render_template_string(LAYOUT, content=content)
-    except: return "Sync Error"
 
 @app.route("/stats")
 def stats():
@@ -157,6 +173,5 @@ def stats():
     return render_template_string(LAYOUT, content=content)
 
 if __name__ == "__main__":
-    # Check for server port (deployment) or use 5000 (local)
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
