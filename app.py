@@ -1,62 +1,126 @@
-@app.route("/match")
-def match():
-    m_id = request.args.get("id")
-    # Always get the result, even if it's the fallback
-    res = get_match_analysis(m_id)
+from flask import Flask, render_template_string, request, redirect, url_for
+import match_predictor
+
+app = Flask(__name__)
+
+# HIGH-END MOBILE CSS & WRAPPER
+LAYOUT = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        body { font-family: 'Inter', sans-serif; background: #05070a; color: #d4d4d8; }
+        .glass { background: rgba(15, 18, 24, 0.8); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.05); }
+        .btn-glow:active { transform: scale(0.95); transition: 0.1s; }
+    </style>
+</head>
+<body class="p-4 italic">
+    <div class="max-w-md mx-auto min-h-screen flex flex-col">
+        <header class="flex justify-between items-center py-4 mb-4 border-b border-white/5">
+            <h1 class="text-xl font-black tracking-tighter text-white">PRO<span class="text-green-500">PREDICTOR</span></h1>
+            <a href="/acca" class="text-[10px] font-black bg-green-500/10 text-green-500 px-3 py-1 rounded-full uppercase">ACCA Builder</a>
+        </header>
+        {{ content | safe }}
+    </div>
+</body>
+</html>
+"""
+
+@app.route("/")
+def hub():
+    # Get fixtures from Bzzoiro
+    events = match_predictor.get_data("events/", {"status": "NS"}) # Not Started
+    if not events:
+        return render_template_string(LAYOUT, content='<div class="text-center py-20 uppercase font-black opacity-20">No Live Fixtures</div>')
     
-    # WE REMOVED THE "IF ERROR" RETURN TO PREVENT THE LOOP
+    # Simple pagination index
+    idx = int(request.args.get('i', 0))
+    if idx >= len(events): idx = 0
     
+    m = events[idx]
+    analysis = match_predictor.get_structured_analysis(m['id'])
+    
+    if "error" in analysis:
+        return redirect(url_for('hub', i=idx+1))
+
     content = f'''
-    <div class="mb-6"><a href="/" class="text-zinc-600 font-bold text-[10px] uppercase tracking-widest">← RETURN TO HUB</a></div>
-    
-    <div class="flex justify-center items-center gap-10 mb-10 italic">
-        <div class="text-center"><p class="text-xs font-black text-white uppercase">{res['h_name']}</p></div>
-        <div class="text-zinc-800 font-black text-2xl opacity-20 italic uppercase tracking-tighter">VS</div>
-        <div class="text-center"><p class="text-xs font-black text-white uppercase">{res['a_name']}</p></div>
+    <div class="flex justify-between items-center mb-6">
+        <span class="text-[10px] font-black text-zinc-500 uppercase tracking-widest">{analysis['league']}</span>
+        <span class="text-[10px] font-black text-white bg-zinc-800 px-2 py-0.5 rounded">{analysis['time'][11:16]}</span>
     </div>
 
-    <div class="text-center mb-8">
-        <span class="bg-green-500/10 text-green-500 border border-green-500/20 px-4 py-1 rounded-full text-[9px] font-black tracking-[0.3em] uppercase">{res['tag']}</span>
-    </div>
-
-    <div class="bg-gradient-to-br from-[#10141d] to-[#07090e] p-8 rounded-[2.5rem] border border-white/5 mb-6 shadow-2xl relative overflow-hidden italic">
-        <span class="text-[9px] font-black text-zinc-500 tracking-widest uppercase mb-4 block">🔵 Recommended Tip (Best Value)</span>
-        <h2 class="text-3xl font-black text-white uppercase tracking-tighter mb-4 leading-none">{res['rec']['t']}</h2>
-        <p class="text-5xl font-black text-green-500 tracking-tighter mb-6">{res['rec']['p']}% <span class="text-[10px] text-zinc-600 uppercase">PROBABILITY</span></p>
-        <ul class="space-y-2 border-t border-white/5 pt-4">
-            {"".join([f'<li class="text-[10px] text-zinc-400 font-bold uppercase flex items-center gap-2"><span class="w-1 h-1 bg-green-500 rounded-full"></span>{r}</li>' for r in res['rec']['r']])}
-        </ul>
-    </div>
-
-    <div class="grid grid-cols-2 gap-4 mb-10 italic">
-        <div class="bg-[#0f1218] p-6 rounded-[2rem] border border-white/5">
-            <span class="text-[8px] text-zinc-600 font-black uppercase block mb-2 italic">🟢 Alternate (Safest)</span>
-            <h4 class="text-sm font-black text-white uppercase mb-1">{res['alt']['t']}</h4>
-            <p class="text-2xl font-black text-white italic opacity-40">{res['alt']['p']}%</p>
+    <div class="flex justify-around items-center mb-8">
+        <div class="text-center w-1/3">
+            <div class="w-16 h-16 glass rounded-full mx-auto mb-2 flex items-center justify-center text-xl font-black text-white uppercase">{analysis['h_name'][0]}</div>
+            <p class="text-[10px] font-black uppercase text-zinc-400 leading-tight">{analysis['h_name']}</p>
         </div>
-        <div class="bg-[#0f1218] p-6 rounded-[2rem] border border-white/5">
-            <span class="text-[8px] text-zinc-600 font-black uppercase block mb-2 italic tracking-widest">🔴 High Risk</span>
-            <h4 class="text-sm font-black text-red-500 uppercase mb-1">{res['risk']['t']}</h4>
-            <p class="text-2xl font-black text-red-500 italic opacity-40">{res['risk']['p']}%</p>
+        <div class="text-2xl font-black text-zinc-800 italic">VS</div>
+        <div class="text-center w-1/3">
+            <div class="w-16 h-16 glass rounded-full mx-auto mb-2 flex items-center justify-center text-xl font-black text-white uppercase">{analysis['a_name'][0]}</div>
+            <p class="text-[10px] font-black uppercase text-zinc-400 leading-tight">{analysis['a_name']}</p>
         </div>
     </div>
 
-    <div class="bg-black/20 p-8 rounded-[2.5rem] border border-white/5 mb-20 italic">
-        <h3 class="text-[10px] font-black text-zinc-700 uppercase tracking-[0.4em] mb-8 text-center underline decoration-zinc-800">Match Insights & Form</h3>
-        <div class="grid grid-cols-2 gap-10 mb-10 text-center border-b border-white/5 pb-8">
-            <div><p class="text-[8px] text-zinc-600 font-black uppercase mb-2">Avg Goals</p><p class="text-xl font-black text-white">{res['stats']['h_avg']} vs {res['stats']['a_avg']}</p></div>
-            <div><p class="text-[8px] text-zinc-600 font-black uppercase mb-2">Volatility</p><p class="text-xl font-black text-yellow-500">{res['stats']['vol']}</p></div>
+    <div class="text-center mb-6">
+        <span class="px-4 py-1 rounded-full bg-green-500/10 text-green-500 text-[9px] font-black uppercase tracking-widest border border-green-500/20">{analysis['tag']}</span>
+    </div>
+
+    <div class="glass p-6 rounded-[2.5rem] mb-4 shadow-2xl relative overflow-hidden">
+        <div class="flex justify-between items-start mb-2">
+            <span class="text-[9px] font-black text-zinc-600 uppercase tracking-widest">🔵 Recommended</span>
+            <span class="text-2xl font-black text-green-500">{analysis['rec']['p']}%</span>
         </div>
-        <div class="space-y-4">
-            <div class="flex justify-between items-center text-[9px] font-black uppercase tracking-widest">
-                <span class="text-zinc-500">Home Form</span>
-                <div class="flex gap-1">{"".join([f'<span class="w-5 h-5 rounded flex items-center justify-center {"bg-green-500 text-black" if f=="W" else "bg-red-500/20 text-red-500" if f=="L" else "bg-zinc-800 text-zinc-500"}">{f}</span>' for f in res['h_form']])}</div>
-            </div>
-            <div class="flex justify-between items-center text-[9px] font-black uppercase tracking-widest">
-                <span class="text-zinc-500">Away Form</span>
-                <div class="flex gap-1">{"".join([f'<span class="w-5 h-5 rounded flex items-center justify-center {"bg-green-500 text-black" if f=="W" else "bg-red-500/20 text-red-500" if f=="L" else "bg-zinc-800 text-zinc-500"}">{f}</span>' for f in res['a_form']])}</div>
-            </div>
+        <h2 class="text-2xl font-black text-white uppercase tracking-tighter mb-4">{analysis['rec']['t']}</h2>
+        <div class="flex items-center gap-2 mb-4">
+             <span class="text-zinc-500 text-[10px] font-bold">ODDS:</span>
+             <span class="text-white font-black text-sm">{analysis['rec']['o']}</span>
         </div>
+        <div class="space-y-1 border-t border-white/5 pt-4">
+            {"".join([f'<p class="text-[9px] text-zinc-500 font-bold uppercase flex items-center gap-2"><span class="w-1 h-1 bg-green-500 rounded-full"></span>{r}</p>' for r in analysis['rec']['r']])}
+        </div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-3 mb-6">
+        <div class="glass p-5 rounded-[2rem]">
+            <span class="text-[7px] font-black text-zinc-600 uppercase mb-2 block">🟢 Safest</span>
+            <p class="text-[10px] font-black text-white uppercase mb-1">{analysis['alt']['t']}</p>
+            <p class="text-lg font-black text-white opacity-30">{analysis['alt']['o']}</p>
+        </div>
+        <div class="glass p-5 rounded-[2rem]">
+            <span class="text-[7px] font-black text-zinc-600 uppercase mb-2 block tracking-widest text-red-500/50">🔴 High Risk</span>
+            <p class="text-[10px] font-black text-white uppercase mb-1">{analysis['risk']['t']}</p>
+            <p class="text-lg font-black text-red-500 opacity-30">{analysis['risk']['o']}</p>
+        </div>
+    </div>
+
+    <div class="glass p-6 rounded-[2.5rem] mb-10">
+        <h3 class="text-[8px] font-black text-zinc-700 uppercase tracking-[0.4em] mb-4 text-center">Insights & Form</h3>
+        <div class="flex justify-between text-[10px] mb-4 font-bold uppercase">
+            <span class="text-zinc-500">Home Form</span>
+            <div class="flex gap-1">{"".join([f'<span class="w-4 h-4 rounded-sm flex items-center justify-center {"bg-green-500 text-black" if f=="W" else "bg-zinc-800 text-zinc-600"}">{f}</span>' for f in analysis['form']['h']])}</div>
+        </div>
+        <div class="flex justify-between text-[10px] font-bold uppercase">
+            <span class="text-zinc-500">Volatility</span>
+            <span class="text-yellow-500">{analysis['stats']['vol']}</span>
+        </div>
+    </div>
+
+    <div class="mt-auto flex gap-2 pb-10">
+        <a href="/?i={idx-1}" class="flex-1 glass py-4 rounded-full text-center text-[10px] font-black uppercase text-zinc-600 btn-glow">Prev</a>
+        <a href="/?i={idx+1}" class="flex-3 bg-white text-black py-4 rounded-full text-center text-[10px] font-black uppercase flex-grow btn-glow shadow-[0_0_20px_rgba(255,255,255,0.2)]">Next Match</a>
     </div>
     '''
     return render_template_string(LAYOUT, content=content)
+
+@app.route("/acca")
+def acca():
+    # ACCA Logic: Pulls 4 Recommended Tips and combines them
+    content = '<div class="glass p-8 rounded-[3rem] text-center mt-10"><h2 class="text-2xl font-black text-white italic mb-4">ACCA BUILDER</h2><p class="text-zinc-500 text-[10px] font-bold uppercase tracking-widest">Generating 5.00 Odds Ticket...</p></div>'
+    return render_template_string(LAYOUT, content=content)
+
+if __name__ == "__main__":
+    app.run(host='0.0.0.0', port=5000)
