@@ -1,5 +1,5 @@
 from flask import Flask, render_template_string, request
-import requests, os, json, math
+import requests, os, math
 from datetime import datetime, timedelta, timezone
 import match_predictor, database, external_data
 
@@ -8,22 +8,24 @@ database.init_db()
 
 BSD_TOKEN = "631a48f45a20b3352ea3863f8aa23baf610710e2"
 BASE_URL  = "https://sports.bzzoiro.com/api"
+WAT_OFFSET = 1
 
 LEAGUES = [
-    {"id": 1,  "name": "Premier League",  "country": "England",  "icon": "ENG"},
-    {"id": 12, "name": "Championship",    "country": "England",  "icon": "ENG"},
-    {"id": 3,  "name": "La Liga",         "country": "Spain",    "icon": "ESP"},
-    {"id": 4,  "name": "Serie A",         "country": "Italy",    "icon": "ITA"},
-    {"id": 5,  "name": "Bundesliga",      "country": "Germany",  "icon": "GER"},
-    {"id": 14, "name": "Pro League",      "country": "Belgium",  "icon": "BEL"},
-    {"id": 18, "name": "MLS",             "country": "USA",      "icon": "USA"},
-    {"id": 2,  "name": "Liga Portugal",   "country": "Portugal", "icon": "POR"},
-    {"id": 11, "name": "Süper Lig",       "country": "Turkey",   "icon": "TUR"},
-    {"id": 13, "name": "Scottish Prem",   "country": "Scotland", "icon": "SCO"},
-    {"id": 20, "name": "Liga MX",         "country": "Mexico",   "icon": "MEX"},
+    {"id": 1,  "name": "Premier League",   "country": "England",    "icon": "🏴󠁧󠁢󠁥󠁮󠁧󠁿"},
+    {"id": 12, "name": "Championship",     "country": "England",    "icon": "🏴󠁧󠁢󠁥󠁮󠁧󠁿"},
+    {"id": 3,  "name": "La Liga",          "country": "Spain",      "icon": "🇪🇸"},
+    {"id": 4,  "name": "Serie A",          "country": "Italy",      "icon": "🇮🇹"},
+    {"id": 5,  "name": "Bundesliga",       "country": "Germany",    "icon": "🇩🇪"},
+    {"id": 14, "name": "Belgian Pro Lg",   "country": "Belgium",    "icon": "🇧🇪"},
+    {"id": 2,  "name": "Liga Portugal",    "country": "Portugal",   "icon": "🇵🇹"},
+    {"id": 11, "name": "Süper Lig",        "country": "Turkey",     "icon": "🇹🇷"},
+    {"id": 13, "name": "Scottish Prem",    "country": "Scotland",   "icon": "🏴󠁧󠁢󠁳󠁣󠁴󠁿"},
+    {"id": 18, "name": "MLS",              "country": "USA",        "icon": "🇺🇸"},
+    {"id": 20, "name": "Liga MX",          "country": "Mexico",     "icon": "🇲🇽"},
+    {"id": 22, "name": "Bulgarian A PFG",  "country": "Bulgaria",   "icon": "🇧🇬"},
+    {"id": 23, "name": "Romanian Superliga","country": "Romania",   "icon": "🇷🇴"},
 ]
 LEAGUE_MAP = {l["id"]: l for l in LEAGUES}
-WAT_OFFSET = 1
 
 def api_get(path, params=None):
     headers = {"Authorization": f"Token {BSD_TOKEN}"}
@@ -32,7 +34,7 @@ def api_get(path, params=None):
         r.raise_for_status()
         return r.json()
     except Exception as e:
-        print(f"[API Error] {path} -> {e}")
+        print(f"[API] {path} -> {e}")
         return {}
 
 def parse_dt(raw):
@@ -48,346 +50,658 @@ def now_wat():
     return datetime.now(tz=timezone.utc) + timedelta(hours=WAT_OFFSET)
 
 def group_by_date(matches):
-    today    = now_wat().date()
+    today = now_wat().date()
     tomorrow = today + timedelta(days=1)
-    groups   = {}
+    groups = {}
     for m in matches:
-        dt  = parse_dt(m.get("event", {}).get("event_date", ""))
-        d   = dt.date()
+        dt = parse_dt(m.get("event", {}).get("event_date", ""))
+        d  = dt.date()
         key = "TODAY" if d == today else "TOMORROW" if d == tomorrow else dt.strftime("%-d %b").upper()
         groups.setdefault(key, []).append((dt, m))
     for k in groups:
         groups[k].sort(key=lambda x: x[0])
     return groups
 
+def form_dot(r):
+    r = r.upper()
+    cls = {"W": "dot-w", "D": "dot-d", "L": "dot-l"}.get(r, "dot-d")
+    return f'<span class="dot {cls}">{r}</span>'
+
 def form_dots(form_list):
     if not form_list:
-        return '<span style="color:var(--t);font-size:0.62rem">No data</span>'
-    html = '<div class="dots">'
-    for r in list(form_list)[-5:]:
-        r = r.upper()
-        html += f'<span class="dot dot-{r}">{r}</span>'
-    return html + '</div>'
+        return '<span class="no-data">No data</span>'
+    return '<div class="dots">' + ''.join(form_dot(r) for r in list(form_list)[-5:]) + '</div>'
 
 def prob_bar(label, pct, color="green"):
-    c = {"green":"var(--g)","blue":"var(--b)","warn":"var(--w)"}.get(color,"var(--g)")
+    c = {"green": "var(--g)", "blue": "var(--b)", "orange": "var(--w)", "red": "var(--r)"}.get(color, "var(--g)")
     return f'''<div class="prow">
       <div class="plabel"><span>{label}</span><span class="pval">{pct}%</span></div>
-      <div class="ptrack"><div class="pfill" style="width:{pct}%;background:{c}"></div></div>
+      <div class="ptrack"><div class="pfill" style="width:{min(pct,100)}%;background:{c}"></div></div>
     </div>'''
-
-def tag_badge(tag):
-    cls = {"ELITE VALUE":"badge-green","STRONG PICK":"badge-green",
-           "QUANT EDGE":"badge-blue","MONITOR":"badge-muted"}.get(tag,"badge-muted")
-    return f'<span class="badge {cls}">{tag}</span>'
-
-def trend_icon(t):
-    return {"RISING":"up","FALLING":"down","STABLE":"right"}.get(t,"right")
 
 def result_badge(r):
     if r == "WIN":  return '<span class="badge badge-green">WIN</span>'
     if r == "LOSS": return '<span class="badge badge-red">LOSS</span>'
     return '<span class="badge badge-muted">PENDING</span>'
 
-LAYOUT = '''<!DOCTYPE html>
+def tag_badge(tag):
+    cls = {"ELITE PICK": "badge-green", "STRONG PICK": "badge-green",
+           "SOLID TIP": "badge-blue", "MONITOR": "badge-muted"}.get(tag, "badge-muted")
+    return f'<span class="badge {cls}">{tag}</span>'
+
+CSS = '''
+:root{--bg:#070a0f;--s:#0d1117;--s2:#131920;--s3:#1a2230;
+  --g:#00e676;--b:#3d8ef8;--w:#ff8c00;--r:#f44336;--pu:#a855f7;
+  --t:#8892a4;--wh:#dde4f0;--bdr:rgba(255,255,255,0.07)}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--t);font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif;font-size:13px;min-height:100vh;padding-bottom:80px}
+a{text-decoration:none;color:inherit}
+
+nav{position:sticky;top:0;z-index:99;background:rgba(7,10,15,.95);backdrop-filter:blur(20px);border-bottom:1px solid var(--bdr)}
+.nav-i{max-width:480px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;padding:11px 14px}
+.logo{font-size:1rem;font-weight:800;letter-spacing:-.3px;color:var(--wh)}
+.logo span{color:var(--g)}
+.npill{font-size:0.62rem;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;padding:5px 12px;border-radius:50px;border:1px solid var(--bdr);color:var(--t);transition:all .2s}
+.npill.on,.npill:hover{border-color:var(--g);color:var(--g);background:rgba(0,230,118,.07)}
+.nav-pills{display:flex;gap:5px}
+
+.shell{max-width:480px;margin:0 auto;padding:0 14px}
+
+.card{background:var(--s);border:1px solid var(--bdr);border-radius:14px;padding:16px;margin-bottom:8px}
+.badge{display:inline-block;font-size:0.56rem;font-weight:700;letter-spacing:1.8px;text-transform:uppercase;padding:3px 9px;border-radius:50px}
+.badge-green{background:rgba(0,230,118,.1);color:var(--g);border:1px solid rgba(0,230,118,.2)}
+.badge-blue{background:rgba(61,142,248,.1);color:var(--b);border:1px solid rgba(61,142,248,.2)}
+.badge-orange{background:rgba(255,140,0,.1);color:var(--w);border:1px solid rgba(255,140,0,.2)}
+.badge-muted{background:rgba(136,146,164,.07);color:var(--t);border:1px solid var(--bdr)}
+.badge-red{background:rgba(244,67,54,.1);color:var(--r);border:1px solid rgba(244,67,54,.2)}
+.badge-pu{background:rgba(168,85,247,.1);color:var(--pu);border:1px solid rgba(168,85,247,.2)}
+
+.eyebrow{font-size:0.57rem;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:var(--t);margin-bottom:4px}
+.title{font-size:2.5rem;font-weight:800;color:var(--wh);line-height:1;letter-spacing:-.5px}
+.sep{font-size:0.57rem;letter-spacing:2px;text-transform:uppercase;color:var(--t);padding:14px 0 10px;border-bottom:1px solid var(--bdr);margin-bottom:12px}
+
+/* Prob bars */
+.prow{margin-bottom:9px}
+.plabel{display:flex;justify-content:space-between;margin-bottom:3px;font-size:0.68rem}
+.pval{color:var(--wh);font-weight:700}
+.ptrack{height:4px;background:rgba(255,255,255,.04);border-radius:50px;overflow:hidden}
+.pfill{height:100%;border-radius:50px}
+
+/* Form dots */
+.dots{display:flex;gap:3px}
+.dot{width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:0.6rem;font-weight:700}
+.dot-w{background:rgba(0,230,118,.15);color:var(--g)}
+.dot-d{background:rgba(61,142,248,.15);color:var(--b)}
+.dot-l{background:rgba(244,67,54,.15);color:var(--r)}
+.no-data{font-size:0.6rem;color:var(--t)}
+
+/* Tabs */
+.tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:12px;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{flex-shrink:0;font-size:0.62rem;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;padding:6px 12px;border-radius:50px;border:1px solid var(--bdr);color:var(--t);white-space:nowrap;transition:all .2s}
+.tab.on,.tab:hover{border-color:var(--g);color:var(--g);background:rgba(0,230,118,.07)}
+
+/* Fixtures */
+.fix-wrap{background:var(--s);border:1px solid var(--bdr);border-radius:14px;overflow:hidden;margin-bottom:8px}
+.fix-row{display:flex;align-items:center;padding:13px 15px;border-bottom:1px solid var(--bdr);transition:background .15s}
+.fix-row:last-child{border-bottom:none}
+.fix-row:hover{background:rgba(255,255,255,.02)}
+.fix-time{font-size:0.68rem;color:var(--t);min-width:38px;font-weight:600}
+.fix-teams{flex:1;text-align:center;font-size:0.84rem;font-weight:700;color:var(--wh)}
+.fix-vs{color:var(--t);font-size:0.6rem;margin:0 5px;font-weight:400}
+.fix-tag{font-size:0.55rem;font-weight:700;letter-spacing:1.2px;color:var(--g);min-width:40px;text-align:right}
+
+/* Back */
+.back{display:inline-flex;align-items:center;gap:4px;font-size:0.62rem;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:var(--t);padding:14px 0 18px;transition:color .2s}
+.back:hover{color:var(--wh)}
+
+/* Recommended tip box */
+.rec-box{background:linear-gradient(135deg,rgba(0,230,118,.06),rgba(61,142,248,.04));border:1px solid rgba(0,230,118,.15);border-radius:16px;padding:18px;margin-bottom:8px}
+.rec-tip-name{font-size:1.7rem;font-weight:800;color:var(--wh);letter-spacing:-.3px;margin:6px 0 4px}
+.rec-pct{font-size:3rem;font-weight:800;color:var(--g);line-height:1;letter-spacing:-1px}
+.rec-reason{font-size:0.68rem;color:var(--t);line-height:1.55;margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.06)}
+
+/* Safe / Risky boxes */
+.tier-box{border-radius:14px;padding:14px}
+.tier-box.safe{background:rgba(61,142,248,.05);border:1px solid rgba(61,142,248,.18)}
+.tier-box.risky{background:rgba(255,140,0,.05);border:1px solid rgba(255,140,0,.18)}
+.tier-label{font-size:0.56rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px}
+.tier-tip{font-size:1rem;font-weight:800;color:var(--wh);line-height:1.2;margin-bottom:6px}
+.tier-pct{font-size:1.8rem;font-weight:800;line-height:1}
+
+/* Signals */
+.sig-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:3px}
+.sig-on{background:var(--g)}
+.sig-off{background:var(--bdr);border:1px solid var(--t)}
+
+/* Grid */
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-bottom:8px}
+.sbox{background:var(--s2);border:1px solid var(--bdr);border-radius:12px;padding:13px;text-align:center}
+.sval{font-size:1.6rem;font-weight:800;color:var(--wh);line-height:1}
+.sval.g{color:var(--g)}.sval.b{color:var(--b)}.sval.w{color:var(--w)}.sval.r{color:var(--r)}
+.slbl{font-size:0.55rem;letter-spacing:1.5px;text-transform:uppercase;color:var(--t);margin-top:3px}
+
+/* Momentum bar */
+.mom-bar{position:relative;height:7px;background:rgba(255,255,255,.05);border-radius:50px;overflow:hidden;margin:8px 0}
+.mom-h{position:absolute;left:0;top:0;height:100%;background:var(--g);border-radius:50px}
+.mom-a{position:absolute;right:0;top:0;height:100%;background:var(--b);border-radius:50px}
+
+/* Confidence ring */
+.cring{position:relative;width:68px;height:68px;flex-shrink:0}
+.cring-num{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:.85rem;font-weight:800;color:var(--wh)}
+
+/* H2H */
+.h2h-row{display:flex;align-items:center;padding:7px 0;border-bottom:1px solid var(--bdr);font-size:0.7rem;gap:8px}
+.h2h-row:last-child{border-bottom:none}
+.h2h-date{color:var(--t);min-width:48px;font-size:0.62rem}
+.h2h-teams{flex:1;color:var(--wh);font-weight:600;font-size:0.72rem}
+.h2h-score{font-size:1rem;font-weight:800;color:var(--wh);min-width:32px;text-align:right}
+
+/* Last matches */
+.lm-row{display:flex;align-items:center;padding:6px 0;border-bottom:1px solid var(--bdr);font-size:0.68rem;gap:8px}
+.lm-row:last-child{border-bottom:none}
+.lm-res{width:22px;height:22px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:0.58rem;font-weight:700;flex-shrink:0}
+.lm-teams{flex:1;color:var(--wh);font-size:0.7rem}
+.lm-score{color:var(--wh);font-weight:700;font-size:0.72rem}
+.lm-lg{color:var(--t);font-size:0.58rem}
+
+/* Injury */
+.inj-row{display:flex;align-items:center;gap:7px;padding:6px 0;border-bottom:1px solid var(--bdr);font-size:0.7rem}
+.inj-row:last-child{border-bottom:none}
+.inj-dot{width:7px;height:7px;border-radius:50%;background:var(--r);flex-shrink:0}
+.inj-dot.susp{background:var(--w)}
+
+/* Tracker */
+.track-row{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--bdr);font-size:0.7rem}
+.track-row:last-child{border-bottom:none}
+
+/* League card */
+.league-card{background:var(--s);border:1px solid var(--bdr);border-radius:14px;padding:16px 18px;margin-bottom:7px;display:flex;justify-content:space-between;align-items:center;transition:border-color .2s}
+.league-card:hover{border-color:rgba(255,255,255,.14)}
+
+/* ACCA */
+.acca-row{display:flex;justify-content:space-between;align-items:center;padding:13px 15px;border-bottom:1px solid var(--bdr)}
+.acca-row:last-child{border-bottom:none}
+
+.empty{text-align:center;padding:50px 20px;color:var(--t);font-size:0.75rem}
+.info-box{background:var(--s2);border:1px solid var(--bdr);border-radius:11px;padding:11px 13px;font-size:0.68rem;line-height:1.6;color:var(--t);margin-bottom:8px}
+.info-box strong{color:var(--wh)}
+
+@keyframes up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.up{animation:up .3s ease both}
+.d1{animation-delay:.04s}.d2{animation-delay:.08s}.d3{animation-delay:.13s}.d4{animation-delay:.18s}
+
+/* Analyst box */
+.analyst-item{padding:8px 0;border-bottom:1px solid var(--bdr);font-size:0.7rem;line-height:1.55;color:var(--t)}
+.analyst-item:last-child{border-bottom:none}
+.analyst-item strong{color:var(--wh)}
+'''
+
+LAYOUT = f'''<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>ProPredictor</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-:root{--bg:#07090e;--s:#0e1219;--s2:#141820;--g:#00e676;--b:#2979ff;--w:#ff6d00;--r:#f44336;--t:#8892a4;--wh:#e8edf5;--bdr:rgba(255,255,255,0.07)}
-*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-html{scroll-behavior:smooth}
-body{background:var(--bg);color:var(--t);font-family:Inter,sans-serif;font-size:13px;min-height:100vh;padding-bottom:90px}
-a{text-decoration:none;color:inherit}
-nav{position:sticky;top:0;z-index:99;background:rgba(7,9,14,0.92);backdrop-filter:blur(18px);border-bottom:1px solid var(--bdr)}
-.nav-i{max-width:480px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;padding:12px 14px}
-.logo{font-family:"Bebas Neue",sans-serif;font-size:1.3rem;letter-spacing:1px;color:var(--wh)}
-.logo em{color:var(--g);font-style:normal}
-.nav-links{display:flex;gap:5px}
-.npill{font-size:0.6rem;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;padding:5px 11px;border-radius:50px;border:1px solid var(--bdr);color:var(--t);transition:all .2s}
-.npill:hover,.npill.on{border-color:var(--g);color:var(--g);background:rgba(0,230,118,.08)}
-.shell{max-width:480px;margin:0 auto;padding:0 14px}
-.card{background:var(--s);border:1px solid var(--bdr);border-radius:16px;padding:18px;margin-bottom:10px}
-.badge{display:inline-block;font-size:0.58rem;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;padding:3px 9px;border-radius:50px}
-.badge-green{background:rgba(0,230,118,.12);color:var(--g);border:1px solid rgba(0,230,118,.25)}
-.badge-blue{background:rgba(41,121,255,.12);color:var(--b);border:1px solid rgba(41,121,255,.25)}
-.badge-muted{background:rgba(136,146,164,.08);color:var(--t);border:1px solid var(--bdr)}
-.badge-red{background:rgba(244,67,54,.12);color:var(--r);border:1px solid rgba(244,67,54,.25)}
-.display{font-family:"Bebas Neue",sans-serif;color:var(--wh);line-height:1}
-.eyebrow{font-size:0.58rem;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:var(--t);margin-bottom:4px}
-.sep{font-size:0.58rem;letter-spacing:2.5px;text-transform:uppercase;color:var(--t);padding:18px 0 10px;border-bottom:1px solid var(--bdr);margin-bottom:12px}
-.prow{margin-bottom:10px}
-.plabel{display:flex;justify-content:space-between;margin-bottom:4px;font-size:0.68rem}
-.pval{color:var(--wh);font-weight:600}
-.ptrack{height:4px;background:rgba(255,255,255,.05);border-radius:50px;overflow:hidden}
-.pfill{height:100%;border-radius:50px;transition:width .7s cubic-bezier(.4,0,.2,1)}
-.dots{display:flex;gap:4px}
-.dot{width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:0.6rem;font-weight:700}
-.dot-W{background:rgba(0,230,118,.15);color:var(--g)}
-.dot-D{background:rgba(41,121,255,.15);color:var(--b)}
-.dot-L{background:rgba(244,67,54,.15);color:var(--r)}
-.tabs{display:flex;gap:7px;overflow-x:auto;padding-bottom:4px;margin-bottom:14px;scrollbar-width:none}
-.tabs::-webkit-scrollbar{display:none}
-.tab{flex-shrink:0;font-size:0.65rem;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;padding:6px 13px;border-radius:50px;border:1px solid var(--bdr);color:var(--t);transition:all .2s;white-space:nowrap}
-.tab:hover,.tab.on{border-color:var(--g);color:var(--g);background:rgba(0,230,118,.08)}
-.fix-wrap{background:var(--s);border:1px solid var(--bdr);border-radius:16px;overflow:hidden;margin-bottom:10px}
-.fix-row{display:flex;align-items:center;padding:13px 16px;border-bottom:1px solid var(--bdr);transition:background .15s;cursor:pointer}
-.fix-row:last-child{border-bottom:none}
-.fix-row:hover{background:rgba(255,255,255,.02)}
-.fix-time{font-size:0.7rem;color:var(--t);min-width:38px;font-weight:600}
-.fix-teams{flex:1;text-align:center;font-size:0.85rem;font-weight:700;color:var(--wh);padding:0 8px}
-.fix-vs{color:var(--t);font-size:0.65rem;margin:0 4px}
-.fix-arr{color:var(--g);font-size:0.7rem;min-width:14px;text-align:right}
-.back{display:inline-flex;align-items:center;gap:5px;font-size:0.65rem;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:var(--t);padding:14px 0 20px;transition:color .2s}
-.back:hover{color:var(--wh)}
-.rec-box{background:linear-gradient(135deg,rgba(0,230,118,.07),rgba(41,121,255,.05));border:1px solid rgba(0,230,118,.18);border-radius:18px;padding:20px;margin-bottom:10px}
-.rec-market{font-family:"Bebas Neue",sans-serif;font-size:2rem;color:var(--wh);letter-spacing:.5px;margin:6px 0 2px}
-.rec-pct{font-family:"Bebas Neue",sans-serif;font-size:3.2rem;color:var(--g);letter-spacing:-1px;line-height:1}
-.sgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
-.sgrid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px}
-.sbox{background:var(--s2);border:1px solid var(--bdr);border-radius:13px;padding:14px;text-align:center}
-.sval{font-family:"Bebas Neue",sans-serif;font-size:1.8rem;color:var(--wh);line-height:1}
-.sval.g{color:var(--g)}.sval.b{color:var(--b)}.sval.w{color:var(--w)}.sval.r{color:var(--r)}
-.slbl{font-size:0.58rem;letter-spacing:1.5px;text-transform:uppercase;color:var(--t);margin-top:3px}
-.mbar-wrap{position:relative;height:8px;background:rgba(255,255,255,.06);border-radius:50px;overflow:hidden;margin:10px 0}
-.mbar-h{position:absolute;left:0;top:0;height:100%;background:var(--g);border-radius:50px}
-.mbar-a{position:absolute;right:0;top:0;height:100%;background:var(--b);border-radius:50px}
-.cring{position:relative;width:72px;height:72px;flex-shrink:0}
-.cring-num{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:"Bebas Neue",sans-serif;font-size:1rem;color:var(--wh)}
-.edge{font-size:0.6rem;font-weight:700;padding:2px 8px;border-radius:50px}
-.edge-pos{background:rgba(0,230,118,.12);color:var(--g)}
-.edge-neg{background:rgba(244,67,54,.12);color:var(--r)}
-.h2h-row{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid var(--bdr);font-size:0.72rem}
-.h2h-row:last-child{border-bottom:none}
-.h2h-score{font-family:"Bebas Neue",sans-serif;font-size:1.1rem;color:var(--wh)}
-.inj-item{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--bdr);font-size:0.7rem}
-.inj-item:last-child{border-bottom:none}
-.inj-dot{width:7px;height:7px;border-radius:50%;background:var(--r);flex-shrink:0}
-.inj-dot.susp{background:var(--w)}
-.stats-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--bdr);font-size:0.72rem}
-.stats-row:last-child{border-bottom:none}
-.stats-val{font-weight:700;color:var(--wh)}
-.tracker-row{display:flex;justify-content:space-between;align-items:center;padding:11px 14px;border-bottom:1px solid var(--bdr);font-size:0.72rem}
-.tracker-row:last-child{border-bottom:none}
-.league-card{background:var(--s);border:1px solid var(--bdr);border-radius:16px;padding:18px 20px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;transition:border-color .2s}
-.league-card:hover{border-color:rgba(255,255,255,.15)}
-.acca-row{display:flex;justify-content:space-between;align-items:center;padding:13px 16px;border-bottom:1px solid var(--bdr)}
-.acca-row:last-child{border-bottom:none}
-.acca-match{font-size:0.82rem;font-weight:700;color:var(--wh)}
-.acca-mkt{font-size:0.6rem;letter-spacing:1.5px;text-transform:uppercase;color:var(--t);margin-top:2px}
-.acca-odds{font-family:"Bebas Neue",sans-serif;font-size:1.3rem;color:var(--g)}
-.empty{text-align:center;padding:50px 20px;color:var(--t);font-size:0.75rem;letter-spacing:1px}
-.info-box{background:var(--s2);border:1px solid var(--bdr);border-radius:12px;padding:12px 14px;font-size:0.7rem;line-height:1.6;color:var(--t);margin-bottom:8px}
-.info-box strong{color:var(--wh)}
-@keyframes fu{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
-.fu{animation:fu .35s ease both}
-.d1{animation-delay:.05s}.d2{animation-delay:.1s}.d3{animation-delay:.15s}.d4{animation-delay:.2s}
-</style>
+<title>ProPredictor NG</title>
+<style>{CSS}</style>
 </head>
 <body>
 <nav>
   <div class="nav-i">
-    <a href="/" class="logo">PRO<em>PRED</em></a>
-    <div class="nav-links">
-      <a href="/" class="npill {{ "on" if page=="home" else "" }}">Leagues</a>
-      <a href="/acca" class="npill {{ "on" if page=="acca" else "" }}">ACCA</a>
-      <a href="/tracker" class="npill {{ "on" if page=="tracker" else "" }}">Track</a>
+    <div class="logo">PRO<span>PRED</span> NG</div>
+    <div class="nav-pills">
+      <a href="/" class="npill {{{{ 'on' if page=='home' else '' }}}}">Leagues</a>
+      <a href="/acca" class="npill {{{{ 'on' if page=='acca' else '' }}}}">ACCA</a>
+      <a href="/tracker" class="npill {{{{ 'on' if page=='tracker' else '' }}}}">Tracker</a>
     </div>
   </div>
 </nav>
-<div class="shell">{{ content|safe }}</div>
+<div class="shell">{{{{ content|safe }}}}</div>
 </body>
 </html>'''
 
+# ── Routes ────────────────────────────────────────────────────────────────────
+
 @app.route("/")
 def index():
-    c = '<div style="padding:28px 0 16px" class="fu"><p class="eyebrow">Football Intelligence</p><h1 class="display" style="font-size:2.8rem;margin-top:4px">SELECT<br>YOUR LEAGUE</h1></div>'
+    c = '<div style="padding:24px 0 14px" class="up"><p class="eyebrow">Football Intelligence</p><h1 class="title" style="margin-top:5px">SELECT<br>LEAGUE</h1></div>'
     for i, l in enumerate(LEAGUES):
-        c += f'<a href="/league/{l["id"]}" class="league-card fu d{min(i+1,4)}"><div><p class="eyebrow">{l["icon"]} · {l["country"]}</p><p class="display" style="font-size:1.5rem;margin-top:3px">{l["name"]}</p></div><span style="color:var(--t);font-size:1.1rem">›</span></a>'
+        c += f'<a href="/league/{l["id"]}" class="league-card up d{min(i+1,4)}"><div><p class="eyebrow">{l["icon"]} {l["country"]}</p><p style="font-size:1.1rem;font-weight:800;color:var(--wh);margin-top:3px">{l["name"]}</p></div><span style="color:var(--t)">›</span></a>'
     return render_template_string(LAYOUT, content=c, page="home")
 
 @app.route("/league/<int:l_id>")
 def league_page(l_id):
-    league  = LEAGUE_MAP.get(l_id, {"name":"League","icon":"—","country":""})
+    league  = LEAGUE_MAP.get(l_id, {"name":"League","icon":"","country":""})
     data    = api_get("/predictions/")
-    matches = [m for m in data.get("results",[]) if m.get("event",{}).get("league",{}).get("id") == l_id]
+    matches = [m for m in data.get("results",[]) if m.get("event",{}).get("league",{}).get("id")==l_id]
     back    = '<a href="/" class="back">← Leagues</a>'
     if not matches:
         return render_template_string(LAYOUT, content=f'{back}<div class="empty">No fixtures available</div>', page="league")
+
     groups    = group_by_date(matches)
     date_keys = list(groups.keys())
     active    = request.args.get("tab", date_keys[0] if date_keys else "TODAY")
-    tabs = '<div class="tabs">' + ''.join(f'<a href="/league/{l_id}?tab={k}" class="tab {"on" if k==active else ""}">{k} ({len(groups[k])})</a>' for k in date_keys) + '</div>'
+
+    tabs = '<div class="tabs">' + ''.join(
+        f'<a href="/league/{l_id}?tab={k}" class="tab {"on" if k==active else ""}">{k} ({len(groups[k])})</a>'
+        for k in date_keys
+    ) + '</div>'
+
     rows = '<div class="fix-wrap">'
     for dt, m in groups.get(active, []):
-        e = m.get("event",{}); h,a = e.get("home_team","?"), e.get("away_team","?"); mid = m.get("id",0)
-        rows += f'<a href="/match/{mid}" class="fix-row"><span class="fix-time">{dt.strftime("%H:%M")}</span><span class="fix-teams">{h}<span class="fix-vs">vs</span>{a}</span><span class="fix-arr">›</span></a>'
+        e = m.get("event",{}); h = e.get("home_team","?"); a = e.get("away_team","?")
+        mid = m.get("id", 0)
+        # Quick tip preview
+        res = match_predictor.analyze_match(m, l_id)
+        tip_label = res["recommended"]["tip"] if res else ""
+        rows += f'''<a href="/match/{mid}" class="fix-row">
+          <span class="fix-time">{dt.strftime("%H:%M")}</span>
+          <span class="fix-teams">{h}<span class="fix-vs">vs</span>{a}</span>
+          <span class="fix-tag">{tip_label[:10]}</span>
+        </a>'''
     rows += '</div>'
-    c = f'{back}<div class="fu" style="margin-bottom:20px"><p class="eyebrow">{league["icon"]} · {league["country"]}</p><h2 class="display" style="font-size:2rem;margin-top:4px">{league["name"]}</h2><p style="font-size:0.65rem;color:var(--t);margin-top:5px;letter-spacing:1px">{len(matches)} FIXTURES</p></div>{tabs}{rows}'
+
+    c  = back
+    c += f'<div class="up" style="margin-bottom:18px"><p class="eyebrow">{league["icon"]} {league["country"]}</p>'
+    c += f'<h2 class="title" style="font-size:1.8rem;margin-top:4px">{league["name"]}</h2>'
+    c += f'<p style="font-size:0.62rem;color:var(--t);margin-top:5px">{len(matches)} fixtures</p></div>'
+    c += tabs + rows
     return render_template_string(LAYOUT, content=c, page="league")
 
 @app.route("/match/<int:match_id>")
 def match_display(match_id):
-    data   = api_get(f"/predictions/{match_id}/")
+    data = api_get(f"/predictions/{match_id}/")
     if not data:
-        return render_template_string(LAYOUT, content='<a href="/" class="back">← Home</a><div class="empty">Match data unavailable</div>', page="match")
-    event  = data.get("event",{}); league = event.get("league",{})
-    l_id   = league.get("id",1); l_info = LEAGUE_MAP.get(l_id, {"name":league.get("name",""),"icon":"","country":""})
-    h      = event.get("home_team","Home"); a = event.get("away_team","Away")
+        return render_template_string(LAYOUT, content='<a href="/" class="back">← Home</a><div class="empty">Match unavailable</div>', page="match")
+
+    event  = data.get("event", {})
+    league = event.get("league", {})
+    l_id   = league.get("id", 1)
+    l_info = LEAGUE_MAP.get(l_id, {"name": league.get("name",""), "icon":"", "country":""})
+    h      = event.get("home_team","Home")
+    a      = event.get("away_team","Away")
     dt     = parse_dt(event.get("event_date",""))
-    res    = match_predictor.analyze_match(data, l_id)
-    if not res:
-        return render_template_string(LAYOUT, content=f'<a href="/league/{l_id}" class="back">← {l_info["name"]}</a><div class="empty">Analysis unavailable</div>', page="match")
+
+    # Get enriched real data first
     enriched = external_data.enrich_match(data)
+    # Build analyst narrative
+    narrative = external_data.build_analyst_narrative(enriched, h, a)
+
+    # Analyze with real form data
+    res = match_predictor.analyze_match(data, l_id, enriched)
+    if not res:
+        return render_template_string(LAYOUT,
+            content=f'<a href="/league/{l_id}" class="back">← {l_info["name"]}</a><div class="empty">Analysis unavailable</div>',
+            page="match")
+
+    # Log prediction
     try:
         database.log_prediction(
             match_id=match_id, league_id=l_id, league_name=l_info.get("name",""),
             home_team=h, away_team=a, match_date=dt.strftime("%Y-%m-%d %H:%M"),
-            market=res["rec"]["t"], probability=res["rec"]["p"], fair_odds=res["rec"]["odds"],
-            bookie_odds=None, edge=res["rec"].get("edge"), confidence=res["confidence"],
-            xg_home=res["xg_h"], xg_away=res["xg_a"], likely_score=res["likely_score"])
+            market=res["recommended"]["tip"], probability=res["recommended"]["prob"],
+            fair_odds=res["recommended"]["odds"], bookie_odds=None,
+            edge=res["recommended"].get("edge"), confidence=res["confidence"],
+            xg_home=res["xg_h"], xg_away=res["xg_a"], likely_score="")
     except: pass
-    _try_settle_finished(data, match_id)
-    ox=res["1x2"]; mkts=res["markets"]; mom=res["momentum"]; ups=res["upset"]; frm=res["form"]; std=res["standings"]
-    conf=res["confidence"]; rc="#00e676" if conf>=60 else "#2979ff" if conf>=45 else "#ff6d00"
-    r_c,cx,cy=30,36,36; circ=2*math.pi*r_c; dash=circ*(conf/100)
-    edge=res["rec"].get("edge")
-    edge_html=f'<span class="edge {"edge-pos" if edge and edge>0 else "edge-neg"}>{"+" if edge and edge>0 else ""}{edge}% edge</span>' if edge is not None else ""
-    total_mom=max(mom["home"]+mom["away"],1); mh_w=round(mom["home"]/total_mom*100); ma_w=round(mom["away"]/total_mom*100)
-    ups_color={"warn":"var(--w)","blue":"var(--b)","muted":"var(--t)"}.get(ups["color"],"var(--t)")
+    _try_settle(data, match_id)
+
+    rec  = res["recommended"]
+    safe = res["safest"]
+    risky_list = res["risky"]
+    risky_main = risky_list[0] if risky_list else {"tip":"—","prob":0,"odds":0}
+    ox   = res["1x2"]
+    mkts = res["markets"]
+    mom  = res["momentum"]
+    frm  = res["form"]
+
+    # Use real form from API Football if available
+    h_form_display = enriched.get("home_form") or frm["home"]
+    a_form_display = enriched.get("away_form") or frm["away"]
+
+    conf   = res["confidence"]
+    rc     = "#00e676" if conf>=60 else "#3d8ef8" if conf>=45 else "#ff8c00"
+    r_svg  = 28; cx = cy = 34
+    circ   = 2 * math.pi * r_svg
+    dash   = circ * (conf / 100)
+
+    edge      = rec.get("edge")
+    edge_html = f'<span class="badge {"badge-green" if edge and edge>0 else "badge-red"}">{"+" if edge and edge>0 else ""}{edge}% edge</span>' if edge is not None else ""
+
+    total_mom = max(mom["home"] + mom["away"], 1)
+    mh_w = round(mom["home"] / total_mom * 100)
+    ma_w = round(mom["away"] / total_mom * 100)
+
+    agree_html = ''.join(
+        [f'<span class="sig-dot {"sig-on" if i < rec["agree"] else "sig-off"}"></span>'
+         for i in range(3)]
+    )
+
+    h_inj = enriched.get("home_injuries", [])
+    a_inj = enriched.get("away_injuries", [])
+    h2h_sum = enriched.get("h2h_summary")
+    h_last  = enriched.get("home_last", [])
+    a_last  = enriched.get("away_last", [])
+    h_stats = enriched.get("home_stats")
+    a_stats = enriched.get("away_stats")
+
     c = f'<a href="/league/{l_id}" class="back">← {l_info["name"]}</a>'
-    c += f'<div class="fu" style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px"><div>{tag_badge(res["tag"])}<h2 class="display" style="font-size:1.9rem;margin-top:8px;line-height:1.1">{h}<br><span style="color:var(--t);font-size:0.9rem;font-family:Inter,sans-serif;font-weight:400">vs</span><br>{a}</h2><p style="font-size:0.62rem;color:var(--t);margin-top:7px;letter-spacing:1.2px">{dt.strftime("%-d %b %Y")} · {dt.strftime("%H:%M")} WAT</p></div><div class="cring fu d1"><svg width="72" height="72" viewBox="0 0 72 72"><circle cx="{cx}" cy="{cy}" r="{r_c}" stroke="rgba(255,255,255,.06)" stroke-width="5" fill="none"/><circle cx="{cx}" cy="{cy}" r="{r_c}" stroke="{rc}" stroke-width="5" fill="none" stroke-dasharray="{dash:.1f} {circ:.1f}" stroke-linecap="round" transform="rotate(-90 {cx} {cy})"/></svg><div class="cring-num">{conf:.0f}%</div></div></div>'
-    h_inj=enriched.get("home_injuries",[]); a_inj=enriched.get("away_injuries",[])
-    if h_inj or a_inj:
-        c += '<div class="card fu d1" style="border-color:rgba(244,67,54,.2)"><p class="sep" style="padding-top:0;margin-top:0;color:var(--r)">Injuries & Suspensions</p>'
-        for team_name, inj_list in [(h,h_inj),(a,a_inj)]:
-            if inj_list:
-                c += f'<p class="eyebrow" style="margin-bottom:8px">{team_name}</p>'
-                for inj in inj_list[:4]:
-                    dc="inj-dot susp" if "suspend" in inj.get("type","").lower() else "inj-dot"
-                    c += f'<div class="inj-item"><div class="{dc}"></div><span style="color:var(--wh)">{inj["name"]}</span><span style="margin-left:auto;font-size:0.6rem">{inj["type"]}</span></div>'
-        c += '</div>'
-    elif not external_data.APIFOOTBALL_KEY:
-        c += '<div class="info-box fu d1">Add <strong>APIFOOTBALL_KEY</strong> environment variable to unlock H2H history, injury reports and season stats — free at api-football.com</div>'
-    # ── Three-tier tip display ──
-    mn = res["main"]; sf = res["safe"]; rk = res["risky"]
-    agree_dots = "".join(['<span style="width:7px;height:7px;border-radius:50%;background:var(--g);display:inline-block;margin-right:3px"></span>' for _ in range(mn["agree"])] + ['<span style="width:7px;height:7px;border-radius:50%;background:var(--bdr);border:1px solid var(--t);display:inline-block;margin-right:3px"></span>' for _ in range(3 - mn["agree"])])
-    mn_edge = mn.get("edge"); mn_edge_html = f'<span class="edge {"edge-pos" if mn_edge and mn_edge>0 else "edge-neg"}">{"+" if mn_edge and mn_edge>0 else ""}{mn_edge}% edge</span>' if mn_edge is not None else ""
-    sf_edge = sf.get("edge"); sf_edge_html = f'<span class="edge {"edge-pos" if sf_edge and sf_edge>0 else "edge-neg"}">{"+" if sf_edge and sf_edge>0 else ""}{sf_edge}% edge</span>' if sf_edge is not None else ""
-    c += f'''<div class="rec-box fu d1">
-      <p class="eyebrow">⚡ Main Tip</p>
-      <p class="rec-market">{mn["tip"]}</p>
-      <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:8px">
-        <p class="rec-pct">{mn["prob"]}%</p>
-        <div><p style="font-size:0.58rem;letter-spacing:1.5px;color:var(--t)">FAIR ODDS</p>
-          <p class="display" style="font-size:1.5rem">{mn["odds"]}</p></div>
-        {"<div>" + mn_edge_html + "</div>" if mn_edge_html else ""}
+
+    # ── Header ──
+    c += f'''<div class="up" style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">
+      <div>
+        {tag_badge(res["tag"])}
+        <h2 style="font-size:1.7rem;font-weight:800;color:var(--wh);margin:7px 0 5px;line-height:1.1">
+          {h}<br><span style="font-size:0.8rem;font-weight:400;color:var(--t)">vs</span><br>{a}
+        </h2>
+        <p style="font-size:0.6rem;color:var(--t);letter-spacing:1px">{dt.strftime("%-d %b %Y")} · {dt.strftime("%H:%M")} WAT</p>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-        <span style="font-size:0.6rem;color:var(--t);letter-spacing:1px">SIGNALS</span>
-        {agree_dots}
-        <span style="font-size:0.6rem;color:var(--t)">{mn["agree"]}/3 agree</span>
-      </div>
-      <p style="font-size:0.68rem;color:var(--t);line-height:1.5;border-top:1px solid var(--bdr);padding-top:8px">{mn["reason"]}</p>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
-      <div class="card fu d2" style="margin:0;border-color:rgba(41,121,255,.2)">
-        <p class="eyebrow" style="color:var(--b)">Safe Bet</p>
-        <p class="display" style="font-size:1.1rem;margin:6px 0;line-height:1.2">{sf["tip"]}</p>
-        <p style="font-family:\'Bebas Neue\',sans-serif;font-size:1.6rem;color:var(--b)">{sf["prob"]}%</p>
-        <p style="font-size:0.62rem;color:var(--t);margin-top:2px">Odds {sf["odds"]} {"· " + sf_edge_html if sf_edge_html else ""}</p>
-        <p style="font-size:0.6rem;color:var(--t);margin-top:6px;line-height:1.4;border-top:1px solid var(--bdr);padding-top:6px">{sf["reason"][:80]}{"…" if len(sf["reason"])>80 else ""}</p>
-      </div>
-      <div class="card fu d2" style="margin:0;border-color:rgba(255,109,0,.2)">
-        <p class="eyebrow" style="color:var(--w)">Risky Combo</p>
-        <p class="display" style="font-size:0.9rem;margin:6px 0;line-height:1.3;color:var(--w)">{rk["tip"]}</p>
-        <p style="font-family:\'Bebas Neue\',sans-serif;font-size:1.6rem;color:var(--w)">{rk["prob"]}%</p>
-        <p style="font-size:0.62rem;color:var(--t);margin-top:2px">Combo odds {rk["odds"]}</p>
-        <p style="font-size:0.6rem;color:var(--t);margin-top:6px;line-height:1.4;border-top:1px solid var(--bdr);padding-top:6px">Joint probability — higher risk, higher reward</p>
+      <div class="cring">
+        <svg width="68" height="68" viewBox="0 0 68 68">
+          <circle cx="{cx}" cy="{cy}" r="{r_svg}" stroke="rgba(255,255,255,.06)" stroke-width="5" fill="none"/>
+          <circle cx="{cx}" cy="{cy}" r="{r_svg}" stroke="{rc}" stroke-width="5" fill="none"
+            stroke-dasharray="{dash:.1f} {circ:.1f}" stroke-linecap="round" transform="rotate(-90 {cx} {cy})"/>
+        </svg>
+        <div class="cring-num">{conf:.0f}%</div>
       </div>
     </div>'''
-    c += f'<div class="sgrid fu d2"><div class="sbox"><p class="sval g">{res["xg_h"]}</p><p class="slbl">xG {h.split()[0]}</p></div><div class="sbox"><p class="sval b">{res["xg_a"]}</p><p class="slbl">xG {a.split()[0]}</p></div></div>'
-    c += f'<div class="card fu d2" style="text-align:center;padding:14px 18px"><p class="eyebrow">Most Likely Score</p><p class="display" style="font-size:2.4rem;margin-top:2px">{res["likely_score"]}</p></div>'
-    c += f'<div class="card fu d2"><p class="sep" style="padding-top:0;margin-top:0">1 x 2</p>{prob_bar("Home Win",ox["home"])}{prob_bar("Draw",ox["draw"],"blue")}{prob_bar("Away Win",ox["away"],"warn")}</div>'
-    c += f'<div class="card fu d3"><p class="sep" style="padding-top:0;margin-top:0">Goal Markets</p>{prob_bar("Over 1.5",mkts["over_15"])}{prob_bar("Over 2.5",mkts["over_25"])}{prob_bar("Over 3.5",mkts["over_35"])}{prob_bar("Under 2.5",mkts["under_25"],"warn")}{prob_bar("BTTS",mkts["btts"],"blue")}</div>'
-    h2h_sum=enriched.get("h2h_summary")
-    if h2h_sum:
-        total_h2h=h2h_sum["total"]; hw=h2h_sum["home_wins"]; dr=h2h_sum["draws"]; aw=h2h_sum["away_wins"]
-        hw_w=round(hw/total_h2h*100); dr_w=round(dr/total_h2h*100); aw_w=round(aw/total_h2h*100)
-        c += f'<div class="card fu d3"><p class="sep" style="padding-top:0;margin-top:0">Head to Head - Last {total_h2h}</p><div class="sgrid3" style="margin-bottom:14px"><div class="sbox"><p class="sval g">{hw}</p><p class="slbl">{h.split()[0]} wins</p></div><div class="sbox"><p class="sval">{dr}</p><p class="slbl">Draws</p></div><div class="sbox"><p class="sval b">{aw}</p><p class="slbl">{a.split()[0]} wins</p></div></div><div style="display:flex;height:6px;border-radius:3px;overflow:hidden;margin-bottom:10px"><div style="flex:{hw_w};background:var(--g)"></div><div style="flex:{dr_w};background:var(--t)"></div><div style="flex:{aw_w};background:var(--b)"></div></div><div style="display:flex;justify-content:space-between;font-size:0.62rem;margin-bottom:12px"><span>Avg goals <strong style="color:var(--wh)">{h2h_sum["avg_goals"]}</strong></span><span>Over 2.5 <strong style="color:var(--wh)">{h2h_sum["over_25_pct"]}%</strong></span><span>BTTS <strong style="color:var(--wh)">{h2h_sum["btts_pct"]}%</strong></span></div>'
-        for m_h2h in h2h_sum.get("matches",[]):
-            hg=m_h2h.get("home_goal","?"); ag=m_h2h.get("away_goal","?"); d_str=m_h2h.get("date","")[:7]
-            c += f'<div class="h2h-row"><span style="color:var(--t);min-width:50px">{d_str}</span><span style="color:var(--wh);flex:1;text-align:center;font-size:0.7rem">{m_h2h.get("home","?")} vs {m_h2h.get("away","?")}</span><span class="h2h-score">{hg}-{ag}</span></div>'
+
+    # ── Injury alert ──
+    if h_inj or a_inj:
+        c += '<div class="card up d1" style="border-color:rgba(244,67,54,.2);margin-bottom:8px">'
+        c += '<p class="sep" style="padding-top:0;margin-top:0;color:var(--r)">⚠ Injury / Suspension Report</p>'
+        for tn, inj_list in [(h, h_inj), (a, a_inj)]:
+            if not inj_list: continue
+            c += f'<p class="eyebrow" style="margin-bottom:6px">{tn}</p>'
+            for inj in inj_list[:4]:
+                dc = "inj-dot susp" if "suspend" in inj.get("type","").lower() else "inj-dot"
+                c += f'<div class="inj-row"><div class="{dc}"></div><span style="color:var(--wh);font-weight:600">{inj["name"]}</span><span style="margin-left:auto;font-size:0.6rem">{inj["type"]}</span></div>'
         c += '</div>'
-    h_stats=enriched.get("home_stats"); a_stats=enriched.get("away_stats")
+    elif not external_data.APIFOOTBALL_KEY:
+        c += '<div class="info-box up d1">Add <strong>APIFOOTBALL_KEY</strong> to your environment to unlock H2H, injuries and season stats.</div>'
+
+    # ── RECOMMENDED TIP ──
+    c += f'''<div class="rec-box up d1">
+      <p class="eyebrow">⚡ Recommended Tip</p>
+      <p class="rec-tip-name">{rec["tip"]}</p>
+      <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap">
+        <p class="rec-pct">{rec["prob"]}%</p>
+        <div>
+          <p style="font-size:0.56rem;letter-spacing:1.5px;color:var(--t)">FAIR ODDS</p>
+          <p style="font-size:1.4rem;font-weight:800;color:var(--wh)">{rec["odds"]}</p>
+        </div>
+        {edge_html}
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:10px">
+        {agree_html}
+        <span style="font-size:0.6rem;color:var(--t)">{rec["agree"]}/3 signals agree</span>
+      </div>
+      <p class="rec-reason">{rec["reason"]}</p>
+    </div>'''
+
+    # ── SAFEST + RISKY ──
+    c += '<div class="g2 up d2">'
+    # Safe
+    safe_odds_str = f'<p style="font-size:0.62rem;color:var(--t);margin-top:4px">Fair odds {safe["odds"]}</p>' if safe.get("odds") else ""
+    c += f'''<div class="tier-box safe">
+      <p class="tier-label" style="color:var(--b)">🛡 Safest Tip</p>
+      <p class="tier-tip">{safe["tip"]}</p>
+      <p class="tier-pct" style="color:var(--b)">{safe["prob"]}%</p>
+      {safe_odds_str}
+    </div>'''
+    # Risky
+    c += f'''<div class="tier-box risky">
+      <p class="tier-label" style="color:var(--w)">🎯 Risky Market</p>
+      <p class="tier-tip">{risky_main["tip"]}</p>
+      <p class="tier-pct" style="color:var(--w)">{risky_main["prob"]}%</p>
+      <p style="font-size:0.62rem;color:var(--t);margin-top:4px">Combo odds ~{risky_main["odds"]}</p>
+    </div>'''
+    c += '</div>'
+
+    # Additional risky combos
+    if len(risky_list) > 1:
+        c += '<div class="card up d2" style="margin-top:0">'
+        c += '<p class="sep" style="padding-top:0;margin-top:0">More Risky Markets</p>'
+        for rk in risky_list[1:]:
+            c += f'<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--bdr)"><span style="font-weight:700;color:var(--wh);font-size:0.75rem">{rk["tip"]}</span><span style="color:var(--w);font-weight:700;font-size:0.75rem">{rk["prob"]}% · ~{rk["odds"]}</span></div>'
+        c += '</div>'
+
+    # ── xG ──
+    c += f'''<div class="g2 up d2">
+      <div class="sbox"><p class="sval g">{res["xg_h"]}</p><p class="slbl">xG {h.split()[0]}</p></div>
+      <div class="sbox"><p class="sval b">{res["xg_a"]}</p><p class="slbl">xG {a.split()[0]}</p></div>
+    </div>'''
+
+    # ── Analyst observations ──
+    has_narrative = any(narrative.get(k) for k in ["form","h2h","goals","injuries","morale"])
+    if has_narrative:
+        c += '<div class="card up d2"><p class="sep" style="padding-top:0;margin-top:0">📋 Analyst View</p>'
+        labels = {
+            "form":     "Form",
+            "morale":   "Momentum",
+            "h2h":      "H2H Pattern",
+            "goals":    "Goal Trend",
+            "injuries": "Absences",
+        }
+        for key, label in labels.items():
+            val = narrative.get(key)
+            if val:
+                c += f'<div class="analyst-item"><strong>{label}:</strong> {val}</div>'
+        c += '</div>'
+
+    # ── 1X2 ──
+    c += f'''<div class="card up d3">
+      <p class="sep" style="padding-top:0;margin-top:0">1 × 2</p>
+      {prob_bar("Home Win", ox["home"])}
+      {prob_bar("Draw", ox["draw"], "blue")}
+      {prob_bar("Away Win", ox["away"], "orange")}
+    </div>'''
+
+    # ── Goal Markets ──
+    c += f'''<div class="card up d3">
+      <p class="sep" style="padding-top:0;margin-top:0">Goal Markets</p>
+      {prob_bar("GG (Both Score)", mkts["gg"])}
+      {prob_bar("NG (Clean Sheet)", mkts["ng"], "orange")}
+      {prob_bar("Over 1.5", mkts["over_15"])}
+      {prob_bar("Over 2.5", mkts["over_25"])}
+      {prob_bar("Over 3.5", mkts["over_35"])}
+      {prob_bar("Under 2.5", mkts["under_25"], "blue")}
+    </div>'''
+
+    # ── H2H ──
+    if h2h_sum and h2h_sum["total"] >= 2:
+        n = h2h_sum["total"]
+        hw = h2h_sum["home_wins"]; dr = h2h_sum["draws"]; aw = h2h_sum["away_wins"]
+        hw_w = round(hw/n*100); dr_w = round(dr/n*100); aw_w = round(aw/n*100)
+        c += f'<div class="card up d3"><p class="sep" style="padding-top:0;margin-top:0">Head to Head · Last {n}</p>'
+        c += f'''<div class="g3" style="margin-bottom:12px">
+          <div class="sbox"><p class="sval g">{hw}</p><p class="slbl">{h.split()[0]}</p></div>
+          <div class="sbox"><p class="sval">{dr}</p><p class="slbl">Draw</p></div>
+          <div class="sbox"><p class="sval b">{aw}</p><p class="slbl">{a.split()[0]}</p></div>
+        </div>
+        <div style="display:flex;height:5px;border-radius:3px;overflow:hidden;margin-bottom:10px">
+          <div style="flex:{hw_w};background:var(--g)"></div>
+          <div style="flex:{dr_w};background:var(--t)"></div>
+          <div style="flex:{aw_w};background:var(--b)"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:0.62rem;margin-bottom:12px">
+          <span>Avg goals <strong style="color:var(--wh)">{h2h_sum["avg_goals"]}</strong></span>
+          <span>O2.5 <strong style="color:var(--wh)">{h2h_sum["over_25_pct"]}%</strong></span>
+          <span>GG <strong style="color:var(--wh)">{h2h_sum["btts_pct"]}%</strong></span>
+        </div>'''
+        for m_h2h in h2h_sum.get("matches", [])[:5]:
+            hg = m_h2h.get("home_goals","?"); ag = m_h2h.get("away_goals","?")
+            d_str = m_h2h.get("date","")[:7]
+            c += f'''<div class="h2h-row">
+              <span class="h2h-date">{d_str}</span>
+              <span class="h2h-teams">{m_h2h.get("home","?")} vs {m_h2h.get("away","?")}</span>
+              <span class="h2h-score">{hg}-{ag}</span>
+            </div>'''
+        c += '</div>'
+
+    # ── Last matches ──
+    def _last_matches_block(title, matches, team_name):
+        if not matches:
+            return ""
+        block = f'<div class="card up d3"><p class="sep" style="padding-top:0;margin-top:0">{title} · Last 5</p>'
+        for m in matches[:5]:
+            hg = m.get("home_goals") or 0; ag = m.get("away_goals") or 0
+            is_home = m["home"] == team_name
+            if is_home:
+                res_char = "W" if hg > ag else "D" if hg == ag else "L"
+            else:
+                res_char = "W" if ag > hg else "D" if hg == ag else "L"
+            cls = {"W":"dot-w","D":"dot-d","L":"dot-l"}[res_char]
+            opp = m["away"] if is_home else m["home"]
+            lg = m.get("league","")
+            block += f'''<div class="lm-row">
+              <div class="lm-res {cls}">{res_char}</div>
+              <div style="flex:1">
+                <div class="lm-teams">{"vs" if is_home else "@"} {opp}</div>
+                <div class="lm-lg">{lg}</div>
+              </div>
+              <span class="lm-score">{hg}-{ag}</span>
+            </div>'''
+        block += '</div>'
+        return block
+
+    c += _last_matches_block(f"{h} Recent Matches", h_last, h)
+    c += _last_matches_block(f"{a} Recent Matches", a_last, a)
+
+    # ── Season Stats ──
     if h_stats or a_stats:
-        c += '<div class="card fu d3"><p class="sep" style="padding-top:0;margin-top:0">Season Stats</p>'
-        for tn, st in [(h,h_stats),(a,a_stats)]:
+        c += '<div class="card up d4"><p class="sep" style="padding-top:0;margin-top:0">Season Stats</p>'
+        for tn, st in [(h, h_stats), (a, a_stats)]:
             if not st: continue
-            c += f'<p class="eyebrow" style="margin-bottom:8px">{tn}</p>'
-            for lbl,val in [("Played",st.get("played",0)),("W/D/L",f'{st.get("wins",0)}/{st.get("draws",0)}/{st.get("losses",0)}'),("Goals scored",st.get("goals_scored",0)),("Goals conceded",st.get("goals_conceded",0)),("Avg scored",st.get("avg_scored",0)),("Avg conceded",st.get("avg_conceded",0)),("Clean sheets",st.get("clean_sheets",0))]:
-                c += f'<div class="stats-row"><span>{lbl}</span><span class="stats-val">{val}</span></div>'
-            c += '<div style="height:12px"></div>'
+            c += f'<p class="eyebrow" style="margin-bottom:7px">{tn}</p>'
+            rows_data = [
+                ("W / D / L", f'{st.get("wins",0)} / {st.get("draws",0)} / {st.get("losses",0)}'),
+                ("Goals scored", f'{st.get("goals_scored",0)} ({st.get("avg_scored",0):.1f}/game)'),
+                ("Goals conceded", f'{st.get("goals_conceded",0)} ({st.get("avg_conceded",0):.1f}/game)'),
+                ("Clean sheets", st.get("clean_sheets",0)),
+            ]
+            for lbl, val in rows_data:
+                c += f'<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--bdr);font-size:0.7rem"><span>{lbl}</span><span style="color:var(--wh);font-weight:700">{val}</span></div>'
+            c += '<div style="height:10px"></div>'
         c += '</div>'
-    c += f'<div class="card fu d3"><p class="sep" style="padding-top:0;margin-top:0">Momentum</p><div style="display:flex;justify-content:space-between;font-size:0.68rem;margin-bottom:6px"><span style="color:var(--g)">{h.split()[0]} ({mom["home"]}%)</span><span style="color:var(--b)">{a.split()[0]} ({mom["away"]}%)</span></div><div class="mbar-wrap"><div class="mbar-h" style="width:{mh_w}%"></div><div class="mbar-a" style="width:{ma_w}%"></div></div><p style="font-size:0.65rem;color:var(--t);margin-top:8px">{mom["narrative"]}</p></div>'
-    c += f'<div class="sgrid fu d4"><div class="card" style="margin:0"><p class="eyebrow">Upset Risk</p><p class="display" style="font-size:1.8rem;color:{ups_color};margin:6px 0">{ups["index"]}</p><p style="font-size:0.6rem;color:{ups_color};letter-spacing:1px">{ups["label"]}</p></div><div class="card" style="margin:0"><p class="eyebrow">Style</p><p style="font-size:0.68rem;line-height:1.5;color:var(--t);margin-top:6px">{res["style"]}</p></div></div>'
-    c += f'<div class="card fu d4"><p class="sep" style="padding-top:0;margin-top:0">Form - Last 5</p><div style="display:flex;flex-direction:column;gap:12px;margin-bottom:16px"><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:0.78rem;font-weight:700;color:var(--wh)">{h}</span>{form_dots(frm["home"])}</div><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:0.78rem;font-weight:700;color:var(--wh)">{a}</span>{form_dots(frm["away"])}</div></div><div style="display:flex;gap:20px;padding-top:14px;border-top:1px solid var(--bdr)"><div><p class="eyebrow">Standing</p><p class="display" style="font-size:1.4rem">{"#"+str(std["home"]) if std["home"] else "—"}</p><p style="font-size:0.6rem;color:var(--t)">{h.split()[0]}</p></div><div><p class="eyebrow">Standing</p><p class="display" style="font-size:1.4rem">{"#"+str(std["away"]) if std["away"] else "—"}</p><p style="font-size:0.6rem;color:var(--t)">{a.split()[0]}</p></div></div></div>'
+
+    # ── Form + Momentum ──
+    c += f'''<div class="card up d4">
+      <p class="sep" style="padding-top:0;margin-top:0">Form & Momentum</p>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span style="font-size:0.75rem;font-weight:700;color:var(--wh)">{h}</span>
+        {form_dots(h_form_display)}
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <span style="font-size:0.75rem;font-weight:700;color:var(--wh)">{a}</span>
+        {form_dots(a_form_display)}
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:0.67rem;margin-bottom:5px">
+        <span style="color:var(--g)">{h.split()[0]} {mom["home"]}%</span>
+        <span style="color:var(--b)">{a.split()[0]} {mom["away"]}%</span>
+      </div>
+      <div class="mom-bar">
+        <div class="mom-h" style="width:{mh_w}%"></div>
+        <div class="mom-a" style="width:{ma_w}%"></div>
+      </div>
+      <p style="font-size:0.67rem;color:var(--t);margin-top:8px">{mom["narrative"]}</p>
+      <p style="font-size:0.67rem;color:var(--t);margin-top:5px">{res["style"]}</p>
+    </div>'''
+
     return render_template_string(LAYOUT, content=c, page="match")
+
+# ── ACCA ──────────────────────────────────────────────────────────────────────
 
 @app.route("/acca")
 def acca():
-    data=api_get("/predictions/"); matches=data.get("results",[]); picks,combined=match_predictor.pick_acca(matches,n=5,min_conv=42.0)
-    c='<div style="padding:28px 0 16px" class="fu"><p class="eyebrow">Daily Best Picks</p><h1 class="display" style="font-size:2.8rem;margin-top:4px">ACCA<br>BUILDER</h1></div>'
+    data    = api_get("/predictions/")
+    matches = data.get("results", [])
+    picks, combined = match_predictor.pick_acca(matches, n=5, min_conv=42.0)
+
+    c  = '<div style="padding:24px 0 14px" class="up"><p class="eyebrow">Daily Best Picks</p><h1 class="title" style="margin-top:5px">ACCA<br>BUILDER</h1></div>'
     if not picks:
-        c+='<div class="empty">No qualifying picks today</div>'
-        return render_template_string(LAYOUT,content=c,page="acca")
-    c+='<div class="fix-wrap fu d1">'
+        c += '<div class="empty">No qualifying picks for today</div>'
+        return render_template_string(LAYOUT, content=c, page="acca")
+
+    c += '<div class="fix-wrap up d1">'
     for p in picks:
-        e=p["match"].get("event",{}); h,a=e.get("home_team","?"),e.get("away_team","?"); res=p["result"]; mid=p["match"].get("id",0)
-        l_info=LEAGUE_MAP.get(p["league_id"],{"icon":"—","name":""}); mn=res["main"]; edge=mn.get("edge")
-        c+=f'<a href="/match/{mid}" class="acca-row"><div><p style="font-size:0.58rem;color:var(--t);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:3px">{l_info.get("icon","—")} {l_info.get("name","")}</p><p class="acca-match">{h} vs {a}</p><p class="acca-mkt">{mn["tip"]} · {mn["prob"]}%{"  +" + str(edge) + "% edge" if edge and edge>0 else ""}</p><p style="font-size:0.6rem;color:var(--t);margin-top:3px">{mn["reason"][:60]}{"…" if len(mn["reason"])>60 else ""}</p></div><p class="acca-odds">{mn["odds"]}</p></a>'
-    c+=f'</div><div class="rec-box fu d2" style="text-align:center;margin-top:12px"><p class="eyebrow">Combined Odds</p><p class="rec-pct" style="font-size:4rem">{combined}</p><p style="font-size:0.62rem;color:var(--t);margin-top:4px;letter-spacing:1px">{len(picks)}-FOLD ACCUMULATOR</p></div><p style="font-size:0.6rem;color:var(--t);text-align:center;padding:14px;letter-spacing:1px">Fair odds shown · Gamble responsibly</p>'
-    return render_template_string(LAYOUT,content=c,page="acca")
+        e    = p["match"].get("event",{})
+        h, a = e.get("home_team","?"), e.get("away_team","?")
+        res  = p["result"]; mid = p["match"].get("id",0)
+        l_info = LEAGUE_MAP.get(p["league_id"], {"icon":"","name":""})
+        rec  = res["recommended"]
+        edge = rec.get("edge")
+        c += f'''<a href="/match/{mid}" class="acca-row">
+          <div style="flex:1">
+            <p style="font-size:0.57rem;color:var(--t);letter-spacing:1.2px;text-transform:uppercase;margin-bottom:3px">{l_info.get("icon","")} {l_info.get("name","")}</p>
+            <p style="font-size:0.82rem;font-weight:700;color:var(--wh)">{h} vs {a}</p>
+            <p style="font-size:0.62rem;color:var(--t);margin-top:2px">{rec["tip"]} · {rec["prob"]}%{"  +" + str(edge) + "% edge" if edge and edge>0 else ""}</p>
+            <p style="font-size:0.6rem;color:var(--t);margin-top:2px;line-height:1.4">{rec["reason"][:65]}{"…" if len(rec["reason"])>65 else ""}</p>
+          </div>
+          <p style="font-size:1.3rem;font-weight:800;color:var(--g);margin-left:10px">{rec["odds"]}</p>
+        </a>'''
+    c += '</div>'
+    c += f'''<div style="background:linear-gradient(135deg,rgba(0,230,118,.06),rgba(61,142,248,.04));border:1px solid rgba(0,230,118,.15);border-radius:16px;padding:20px;text-align:center;margin-top:10px" class="up d2">
+      <p class="eyebrow">Combined Odds</p>
+      <p style="font-size:4rem;font-weight:800;color:var(--g);letter-spacing:-2px;line-height:1">{combined}</p>
+      <p style="font-size:0.6rem;color:var(--t);margin-top:6px;letter-spacing:1px">{len(picks)}-FOLD ACCUMULATOR</p>
+    </div>
+    <p style="font-size:0.58rem;color:var(--t);text-align:center;padding:12px;letter-spacing:1px">Fair odds shown · Gamble responsibly</p>'''
+    return render_template_string(LAYOUT, content=c, page="acca")
+
+# ── TRACKER ───────────────────────────────────────────────────────────────────
 
 @app.route("/tracker")
 def tracker():
-    stats=database.get_tracker_stats(); total=stats["total"]; wins=stats["wins"]; losses=stats["losses"]; hr=stats["hit_rate"]; pending=stats["pending"]
-    c='<div style="padding:28px 0 16px" class="fu"><p class="eyebrow">Model Performance</p><h1 class="display" style="font-size:2.8rem;margin-top:4px">VALUE<br>TRACKER</h1></div>'
-    if total==0:
-        c+='<div class="info-box">No settled predictions yet. Browse match pages to start logging — results auto-settle when matches finish.</div>'
+    stats = database.get_tracker_stats()
+    total = stats["total"]; wins = stats["wins"]
+    losses = stats["losses"]; hr = stats["hit_rate"]; pending = stats["pending"]
+    c = '<div style="padding:24px 0 14px" class="up"><p class="eyebrow">Model Performance</p><h1 class="title" style="margin-top:5px">VALUE<br>TRACKER</h1></div>'
+    if total == 0:
+        c += '<div class="info-box">No settled predictions yet. Browse match pages to log — they auto-settle when results come in.</div>'
     else:
-        hr_c="var(--g)" if hr>=60 else "var(--w)" if hr>=50 else "var(--r)"
-        c+=f'<div class="sgrid fu d1"><div class="sbox"><p class="sval" style="font-size:2.8rem;color:{hr_c}">{hr}%</p><p class="slbl">Hit Rate</p></div><div class="sbox"><p class="sval g">{wins}</p><p class="slbl">Wins</p></div></div><div class="sgrid fu d1"><div class="sbox"><p class="sval r">{losses}</p><p class="slbl">Losses</p></div><div class="sbox"><p class="sval">{pending}</p><p class="slbl">Pending</p></div></div>'
-    if stats["by_market"]:
-        c+='<div class="card fu d2"><p class="sep" style="padding-top:0;margin-top:0">By Market</p>'
-        for row in stats["by_market"]:
-            mhr=round(row["wins"]/row["total"]*100,1) if row["total"] else 0
-            hrc="var(--g)" if mhr>=60 else "var(--w)" if mhr>=50 else "var(--r)"
-            c+=f'<div class="tracker-row"><div><p style="font-weight:700;color:var(--wh)">{row["market"]}</p><p style="font-size:0.6rem;color:var(--t)">{row["total"]} predictions · avg {round(row["avg_prob"] or 0,1)}%</p></div><p style="font-family:\'Bebas Neue\',sans-serif;font-size:1.5rem;color:{hrc}">{mhr}%</p></div>'
-        c+='</div>'
-    if stats["recent"]:
-        c+='<div class="card fu d3"><p class="sep" style="padding-top:0;margin-top:0">Recent Results</p>'
-        for row in stats["recent"]:
-            hs=row.get("actual_home_score"); as_=row.get("actual_away_score")
-            sc=f"{hs}-{as_}" if hs is not None else "—"
-            c+=f'<div class="tracker-row"><div style="flex:1"><p style="font-size:0.72rem;font-weight:700;color:var(--wh)">{row["home_team"]} vs {row["away_team"]}</p><p style="font-size:0.6rem;color:var(--t)">{row["market"]} · {row["probability"]}% · {row["league_name"]}</p></div><div style="text-align:right"><p style="font-size:0.65rem;color:var(--t);margin-bottom:3px">{sc}</p>{result_badge(row["result"])}</div></div>'
-        c+='</div>'
-    return render_template_string(LAYOUT,content=c,page="tracker")
+        hr_c = "var(--g)" if hr>=60 else "var(--w)" if hr>=50 else "var(--r)"
+        c += f'''<div class="g2 up d1">
+          <div class="sbox"><p class="sval" style="font-size:2.5rem;color:{hr_c}">{hr}%</p><p class="slbl">Hit Rate</p></div>
+          <div class="sbox"><p class="sval g">{wins}</p><p class="slbl">Wins</p></div>
+        </div>
+        <div class="g2 up d1">
+          <div class="sbox"><p class="sval r">{losses}</p><p class="slbl">Losses</p></div>
+          <div class="sbox"><p class="sval">{pending}</p><p class="slbl">Pending</p></div>
+        </div>'''
 
-def _try_settle_finished(api_data, match_id):
+    if stats["by_market"]:
+        c += '<div class="card up d2"><p class="sep" style="padding-top:0;margin-top:0">By Market</p>'
+        for row in stats["by_market"]:
+            mhr = round(row["wins"]/row["total"]*100,1) if row["total"] else 0
+            hrc = "var(--g)" if mhr>=60 else "var(--w)" if mhr>=50 else "var(--r)"
+            c += f'<div class="track-row"><div><p style="font-weight:700;color:var(--wh)">{row["market"]}</p><p style="font-size:0.6rem;color:var(--t)">{row["total"]} tips · avg {round(row["avg_prob"] or 0,1)}%</p></div><p style="font-size:1.4rem;font-weight:800;color:{hrc}">{mhr}%</p></div>'
+        c += '</div>'
+
+    if stats["recent"]:
+        c += '<div class="card up d3"><p class="sep" style="padding-top:0;margin-top:0">Recent Results</p>'
+        for row in stats["recent"]:
+            hs = row.get("actual_home_score"); as_ = row.get("actual_away_score")
+            sc = f"{hs}-{as_}" if hs is not None else "—"
+            c += f'<div class="track-row"><div style="flex:1"><p style="font-weight:700;color:var(--wh);font-size:0.72rem">{row["home_team"]} vs {row["away_team"]}</p><p style="font-size:0.6rem;color:var(--t)">{row["market"]} · {row["probability"]}% · {row["league_name"]}</p></div><div style="text-align:right"><p style="font-size:0.62rem;color:var(--t);margin-bottom:3px">{sc}</p>{result_badge(row["result"])}</div></div>'
+        c += '</div>'
+    return render_template_string(LAYOUT, content=c, page="tracker")
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+
+def _try_settle(api_data, match_id):
     try:
-        event=api_data.get("event",{}); status=event.get("status","")
-        hs=event.get("home_score"); as_=event.get("away_score")
-        if status=="finished" and hs is not None and as_ is not None:
+        event  = api_data.get("event", {})
+        status = event.get("status","")
+        hs = event.get("home_score"); as_ = event.get("away_score")
+        if status == "finished" and hs is not None and as_ is not None:
             for p in database.get_recent_pending():
-                if p["match_id"]==match_id:
-                    database.settle_prediction(match_id,p["market"],int(hs),int(as_))
+                if p["match_id"] == match_id:
+                    database.settle_prediction(match_id, p["market"], int(hs), int(as_))
     except Exception as e:
         print(f"[settle] {e}")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",10000)), debug=False)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), debug=False)
