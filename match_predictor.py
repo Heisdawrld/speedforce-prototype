@@ -1,46 +1,27 @@
 """
-match_predictor.py — ProPredictor Conviction Engine v3
+match_predictor.py — ProPredictor Conviction Engine v4
 
-Philosophy: Don't pick the safest market. Pick the one where the MOST
-signals agree. A tip is only worth giving when multiple independent
-factors point the same direction. The model is not afraid of high odds
-— if data says away win, it says away win.
+TIP STRUCTURE (as defined by user):
+  RECOMMENDED TIP  — 1X2, GG/NG, Overs/Unders, Team to Score
+  SAFEST TIP       — Over 1.5 Goals, Double Chance (1X/X2/12), Win Either Half
+  RISKY MARKET     — HT/FT, Combo (1X2+GG, 1X2+Overs, WIN+Overs)
 
-Each possible tip is scored across 6 independent signals:
-  1. Raw probability (from API's own model)
-  2. xG signal (who is creating more, and by how much)
-  3. Form signal (weighted last-5 results)
-  4. Standing gap (league position difference)
-  5. Value edge (model prob vs bookmaker implied prob)
-  6. Signal agreement (are ALL signals pointing same way?)
-
-A tip wins only when it scores highest ACROSS all signals combined.
-Over 1.5 can no longer win just by being a big number — it needs
-independent backing from xG, form, and context too.
+Conviction engine scores each tip across:
+  - Normalised probability
+  - xG signal (independent creation data)
+  - Form signal (from API Football real data)
+  - Standing signal
+  - Value edge vs bookmaker
 """
 
 import math
 
-# ── Poisson utilities ─────────────────────────────────────────────────────────
+# ── Poisson ───────────────────────────────────────────────────────────────────
 
 def poisson_pmf(k, lam):
     if lam <= 0:
         return 1.0 if k == 0 else 0.0
     return (lam ** k) * math.exp(-lam) / math.factorial(k)
-
-def calculate_likely_score(h_xg, a_xg, over_15_prob=50, max_goals=6):
-    scores = []
-    for h in range(max_goals + 1):
-        for a in range(max_goals + 1):
-            p = poisson_pmf(h, h_xg) * poisson_pmf(a, a_xg)
-            scores.append((p, h, a))
-    scores.sort(reverse=True)
-    best_p, best_h, best_a = scores[0]
-    if best_h == 0 and best_a == 0 and over_15_prob >= 65:
-        for p, h, a in scores:
-            if h + a >= 1:
-                return f"{h}-{a}"
-    return f"{best_h}-{best_a}"
 
 # ── Form utilities ────────────────────────────────────────────────────────────
 
@@ -61,7 +42,7 @@ def form_trend(form_list):
     results = [r.upper() for r in list(form_list)[-5:]]
     vals    = [FORM_VALUE.get(r, 0.5) for r in results]
     recent  = sum(vals[-2:]) / 2
-    earlier = sum(vals[:2])  / 2
+    earlier = sum(vals[:2]) / 2
     diff    = recent - earlier
     if diff >  0.25: return "RISING"
     if diff < -0.25: return "FALLING"
@@ -73,42 +54,22 @@ def momentum_score(h_form, a_form, h_xg, a_xg):
     total_xg   = max(h_xg + a_xg, 0.1)
     h_xg_share = h_xg / total_xg
     a_xg_share = a_xg / total_xg
-    h_momentum = round((h_f * 0.6 + h_xg_share * 0.4) * 100, 1)
-    a_momentum = round((a_f * 0.6 + a_xg_share * 0.4) * 100, 1)
-    h_trend    = form_trend(h_form)
-    a_trend    = form_trend(a_form)
-    gap = abs(h_momentum - a_momentum)
+    h_mom = round((h_f * 0.6 + h_xg_share * 0.4) * 100, 1)
+    a_mom = round((a_f * 0.6 + a_xg_share * 0.4) * 100, 1)
+    h_trend = form_trend(h_form)
+    a_trend = form_trend(a_form)
+    gap = abs(h_mom - a_mom)
     if gap < 8:
-        narrative = "Evenly matched — coin flip momentum"
-    elif h_momentum > a_momentum:
-        narrative = f"Home carrying stronger momentum ({h_trend.lower()})"
+        narrative = "Momentum evenly balanced — neither side holds a clear edge"
+    elif h_mom > a_mom:
+        narrative = f"Home side carrying the momentum ({h_trend.lower()} form)"
     else:
-        narrative = f"Away side in better form ({a_trend.lower()})"
-    return {"home": h_momentum, "away": a_momentum,
-            "h_trend": h_trend, "a_trend": a_trend, "narrative": narrative}
-
-def upset_index(h_win, a_win, h_form, a_form, h_standing, a_standing):
-    if h_win >= a_win:
-        fav_prob  = h_win / 100
-        dog_form  = form_score(a_form)
-        fav_stand = h_standing or 10
-        dog_stand = a_standing or 10
-    else:
-        fav_prob  = a_win / 100
-        dog_form  = form_score(h_form)
-        fav_stand = a_standing or 10
-        dog_stand = h_standing or 10
-    prob_gap     = fav_prob - (1 - fav_prob)
-    stand_diff   = abs((fav_stand or 10) - (dog_stand or 10))
-    stand_factor = min(stand_diff / 10, 1.0)
-    raw   = (dog_form * 0.4 + stand_factor * 0.3 + (1 - prob_gap) * 0.3)
-    index = round(raw * 100, 1)
-    if index >= 65 and prob_gap > 0.15:
-        return {"index": index, "label": "HIGH UPSET RISK",     "color": "warn"}
-    elif index >= 50:
-        return {"index": index, "label": "MODERATE UPSET RISK", "color": "blue"}
-    else:
-        return {"index": index, "label": "LOW UPSET RISK",       "color": "muted"}
+        narrative = f"Away side the in-form team ({a_trend.lower()} trajectory)"
+    return {
+        "home": h_mom, "away": a_mom,
+        "h_trend": h_trend, "a_trend": a_trend,
+        "narrative": narrative
+    }
 
 def value_edge(market_prob, bookmaker_odds):
     if not bookmaker_odds or bookmaker_odds <= 1.0:
@@ -117,340 +78,284 @@ def value_edge(market_prob, bookmaker_odds):
     edge    = (market_prob / 100) - implied
     return round(edge * 100, 1)
 
-def style_profile(h_xg, a_xg, o25, btts):
+def style_profile(h_xg, a_xg, btts):
     total = h_xg + a_xg
-    if total >= 3.0:   style = "HIGH SCORING — both teams creating plenty"
-    elif total >= 2.2: style = "OPEN GAME — goals likely from both sides"
-    elif total >= 1.5: style = "BALANCED — compact, contested midfield battle"
-    else:              style = "LOW SCORING — defensive, set-pieces could decide it"
-    if btts >= 65:     style += " · Both teams likely to score"
-    elif btts <= 35:   style += " · Clean sheet possible"
-    return style
+    if total >= 3.0:   s = "High-scoring encounter expected — both teams creating freely"
+    elif total >= 2.2: s = "Open game — goals likely from both ends"
+    elif total >= 1.5: s = "Balanced midfield contest — goals possible but not guaranteed"
+    else:              s = "Defensive game likely — set pieces and moments of quality will decide"
+    if btts >= 65:     s += " · Both teams likely to find the net"
+    elif btts <= 35:   s += " · Clean sheet on the cards"
+    return s
 
-# ── CONVICTION SCORING ENGINE ─────────────────────────────────────────────────
+# ── xG / Form / Standing signals ─────────────────────────────────────────────
 
-def _xg_signal_for(tip_key, h_xg, a_xg):
-    """
-    How strongly does xG support this tip?
-    Returns 0.0 – 1.0
-    """
+def _xg_signal(tip, h_xg, a_xg):
     total = max(h_xg + a_xg, 0.1)
-    h_dom = h_xg / total   # 0–1, home dominance
+    h_dom = h_xg / total
     a_dom = a_xg / total
-
-    if tip_key == "HOME WIN":
-        # Strong home xG dominance (>60% of total)
+    if tip == "HOME WIN":
         return min(h_dom / 0.6, 1.0) if h_dom > 0.5 else h_dom * 0.5
-    elif tip_key == "AWAY WIN":
+    elif tip == "AWAY WIN":
         return min(a_dom / 0.6, 1.0) if a_dom > 0.5 else a_dom * 0.5
-    elif tip_key == "DRAW":
-        # xG balance (both close to 50%) supports draw
-        balance = 1 - abs(h_dom - 0.5) * 2
-        return balance
-    elif tip_key in ("OVER 1.5", "OVER 2.5", "OVER 3.5"):
-        # Total xG supports overs
-        thresholds = {"OVER 1.5": 1.8, "OVER 2.5": 2.4, "OVER 3.5": 3.2}
-        t = thresholds[tip_key]
+    elif tip == "DRAW":
+        return 1 - abs(h_dom - 0.5) * 2
+    elif tip == "GG":
+        return min(h_xg / 0.8, 1.0) * min(a_xg / 0.8, 1.0)
+    elif tip == "NG":
+        return max(0, 1 - min(h_xg / 0.8, 1.0) * min(a_xg / 0.8, 1.0))
+    elif tip in ("OVER 1.5", "OVER 2.5", "OVER 3.5"):
+        t = {"OVER 1.5": 1.8, "OVER 2.5": 2.4, "OVER 3.5": 3.2}[tip]
         return min(total / t, 1.0)
-    elif tip_key == "BTTS":
-        # Both teams need meaningful xG (>0.6 each)
-        h_score = min(h_xg / 0.8, 1.0)
-        a_score = min(a_xg / 0.8, 1.0)
-        return h_score * a_score
+    elif tip == "UNDER 2.5":
+        return max(0, 1 - total / 2.4)
     return 0.5
 
-def _form_signal_for(tip_key, h_form, a_form):
-    """
-    How strongly does recent form support this tip?
-    Returns 0.0 – 1.0
-    """
+def _form_signal(tip, h_form, a_form):
     h_f = form_score(h_form)
     a_f = form_score(a_form)
-
-    if tip_key == "HOME WIN":
-        # Home form strong, away form weak
+    if tip == "HOME WIN":
         return h_f * (1 - a_f * 0.5)
-    elif tip_key == "AWAY WIN":
+    elif tip == "AWAY WIN":
         return a_f * (1 - h_f * 0.5)
-    elif tip_key == "DRAW":
-        # Both teams mediocre form, or closely matched
-        balance = 1 - abs(h_f - a_f)
-        avg     = (h_f + a_f) / 2
-        # Draw more likely when both around 0.4–0.6
-        mid_factor = 1 - abs(avg - 0.5) * 2
-        return (balance * 0.6 + mid_factor * 0.4)
-    elif tip_key in ("OVER 1.5", "OVER 2.5", "OVER 3.5"):
-        # Attacking form from both sides
+    elif tip == "DRAW":
+        return (1 - abs(h_f - a_f)) * (1 - abs((h_f + a_f)/2 - 0.5) * 2)
+    elif tip in ("GG", "OVER 1.5", "OVER 2.5", "OVER 3.5"):
         return (h_f + a_f) / 2
-    elif tip_key == "BTTS":
-        # Both need decent attacking form
-        return min(h_f, a_f) * 1.2  # capped at 1.0 later
+    elif tip in ("NG", "UNDER 2.5"):
+        return 1 - (h_f + a_f) / 2
     return 0.5
 
-def _standing_signal_for(tip_key, h_stand, a_stand, total_teams=20):
-    """
-    How do league standings support this tip?
-    Returns 0.0 – 1.0
-    """
+def _standing_signal(tip, h_stand, a_stand, total=20):
     if not h_stand or not a_stand:
-        return 0.5  # neutral when unknown
-
-    h_rank = h_stand / total_teams   # 0=top, 1=bottom
-    a_rank = a_stand / total_teams
-    h_strength = 1 - h_rank          # 1=top, 0=bottom
-    a_strength = 1 - a_rank
-
-    if tip_key == "HOME WIN":
-        return h_strength * (1 - a_strength * 0.5)
-    elif tip_key == "AWAY WIN":
-        return a_strength * (1 - h_strength * 0.5)
-    elif tip_key == "DRAW":
-        return 1 - abs(h_strength - a_strength)
-    elif tip_key in ("OVER 1.5", "OVER 2.5"):
-        # Top teams tend to score more
-        return (h_strength + a_strength) / 2
-    elif tip_key == "OVER 3.5":
-        return ((h_strength + a_strength) / 2) * 0.8
-    elif tip_key == "BTTS":
-        return min(h_strength, a_strength)
+        return 0.5
+    h_str = 1 - h_stand / total
+    a_str = 1 - a_stand / total
+    if tip == "HOME WIN":
+        return h_str * (1 - a_str * 0.5)
+    elif tip == "AWAY WIN":
+        return a_str * (1 - h_str * 0.5)
+    elif tip == "DRAW":
+        return 1 - abs(h_str - a_str)
+    elif tip in ("OVER 1.5", "OVER 2.5", "GG"):
+        return (h_str + a_str) / 2
     return 0.5
 
-def _value_signal(tip_prob, bookie_odds):
-    """
-    Does the bookmaker UNDERESTIMATE this outcome? That's signal.
-    Returns 0.0 – 1.0 (0.5 = neutral, >0.5 = value exists)
-    """
-    edge = value_edge(tip_prob, bookie_odds)
+def _value_signal(prob, bookie_odds):
+    edge = value_edge(prob, bookie_odds)
     if edge is None:
         return 0.5
-    # Edge of +5% = strong signal, -5% = weak
     return max(0.0, min(1.0, 0.5 + edge / 20))
 
-def conviction_score(tip_key, prob, bookie_odds,
-                     h_xg, a_xg, h_form, a_form,
-                     h_stand, a_stand):
-    """
-    Multi-signal conviction score for a single tip.
-
-    Core problem solved: Over 1.5 has 80-90% raw prob in almost every match,
-    so it always wins on raw probability alone. We fix this by:
-    
-    1. Normalising probability within its market category
-       (1X2 vs goals markets compete separately, then winners face off)
-    2. Giving 1X2 tips a bonus when signals strongly agree
-    3. Penalising goal markets that are "always high" — the INFORMATION
-       value of Over 1.5 = 85% is low. Over 2.5 = 72% is more informative.
-    
-    Weights:
-      30% — normalised probability (penalised for uninformative markets)
-      28% — xG signal
-      22% — form signal  
-      12% — standing signal
-      8%  — value edge
-    """
-    s_xg       = _xg_signal_for(tip_key, h_xg, a_xg)
-    s_form     = min(_form_signal_for(tip_key, h_form, a_form), 1.0)
-    s_standing = _standing_signal_for(tip_key, h_stand, a_stand)
-    s_value    = _value_signal(prob, bookie_odds)
-
-    # Normalise probability — penalise markets that are "always high"
-    # Over 1.5 at 85% is boring. Home Win at 65% is meaningful.
-    if tip_key == "OVER 1.5":
-        # Scale: 60% prob = 0.0 signal, 95% prob = 1.0 signal
-        # So 85% becomes (85-60)/(95-60) = 0.71 — not automatic winner
-        s_prob = max(0.0, (prob - 60) / 35)
-    elif tip_key == "OVER 2.5":
-        # Scale: 40% = 0.0, 80% = 1.0
-        s_prob = max(0.0, (prob - 40) / 40)
-    elif tip_key == "OVER 3.5":
-        # Scale: 20% = 0.0, 60% = 1.0
-        s_prob = max(0.0, (prob - 20) / 40)
-    elif tip_key == "BTTS":
-        # Scale: 40% = 0.0, 75% = 1.0
-        s_prob = max(0.0, (prob - 40) / 35)
-    else:
-        # 1X2: raw probability is meaningful — Home Win 65% IS significant
-        s_prob = prob / 100
-
-    raw = (s_prob     * 0.30 +
-           s_xg       * 0.28 +
-           s_form     * 0.22 +
-           s_standing * 0.12 +
-           s_value    * 0.08)
-
-    return round(raw * 100, 2)
-
-def _agreement_count(tip_key, h_xg, a_xg, h_form, a_form, h_stand, a_stand):
-    """
-    How many independent signals agree with this tip?
-    Returns int 0–4 (xG, form, standing, each counted if signal >= 0.55)
-    """
+def _agreement_count(tip, h_xg, a_xg, h_form, a_form, h_stand, a_stand):
     signals = [
-        _xg_signal_for(tip_key, h_xg, a_xg),
-        _form_signal_for(tip_key, h_form, a_form),
-        _standing_signal_for(tip_key, h_stand, a_stand),
+        _xg_signal(tip, h_xg, a_xg),
+        min(_form_signal(tip, h_form, a_form), 1.0),
+        _standing_signal(tip, h_stand, a_stand),
     ]
     return sum(1 for s in signals if s >= 0.55)
 
-# ── Tip reason generator ──────────────────────────────────────────────────────
+def conviction_score(tip, prob, bookie_odds, h_xg, a_xg, h_form, a_form, h_stand, a_stand):
+    """
+    Multi-signal conviction. Normalised probability per market category
+    so Over 1.5 at 88% doesn't automatically beat Home Win at 55%.
+    """
+    s_xg       = _xg_signal(tip, h_xg, a_xg)
+    s_form     = min(_form_signal(tip, h_form, a_form), 1.0)
+    s_standing = _standing_signal(tip, h_stand, a_stand)
+    s_value    = _value_signal(prob, bookie_odds)
 
-def _build_reason(tip_key, h_xg, a_xg, h_form, a_form,
-                  h_stand, a_stand, prob, bookie_odds, h_name, a_name):
-    """
-    Generate a short 1-line reason why this tip was selected.
-    Picks the STRONGEST signal and writes a human sentence about it.
-    """
+    # Normalised probability per market category.
+    # Goals markets have high baselines — Over 1.5 at 88% is routine.
+    # 1X2 tips at 55%+ are genuinely meaningful — don't let Over 1.5 drown them.
+    norm_map = {
+        "OVER 1.5":  (78, 97),   # very high baseline — only truly elite scores matter
+        "OVER 2.5":  (48, 85),
+        "OVER 3.5":  (22, 62),
+        "UNDER 2.5": (22, 65),
+        "GG":        (48, 82),
+        "NG":        (25, 65),
+        "HOME WIN":  (33, 82),   # 1X2 — any conviction above 33% is signal
+        "AWAY WIN":  (25, 75),
+        "DRAW":      (22, 45),
+    }
+    lo, hi = norm_map.get(tip, (33, 90))
+    s_prob = max(0.0, min(1.0, (prob - lo) / max(hi - lo, 1)))
+
+    # Extra boost for 1X2 when independent signals strongly agree
+    if tip in ("HOME WIN", "AWAY WIN") and s_xg > 0.62 and s_form > 0.58:
+        s_prob = min(s_prob * 1.3, 1.0)
+    elif tip == "DRAW" and s_xg > 0.7 and s_form > 0.65:
+        s_prob = min(s_prob * 1.2, 1.0)
+
+    raw = (s_prob * 0.30 + s_xg * 0.28 + s_form * 0.22 +
+           s_standing * 0.12 + s_value * 0.08)
+    return round(raw * 100, 2)
+
+# ── Reason builder ────────────────────────────────────────────────────────────
+
+def _reason(tip, h_xg, a_xg, h_form, a_form, h_stand, a_stand, prob, odds, h_name, a_name):
     signals = {
-        "xG":      _xg_signal_for(tip_key, h_xg, a_xg),
-        "form":    min(_form_signal_for(tip_key, h_form, a_form), 1.0),
-        "standing":_standing_signal_for(tip_key, h_stand, a_stand),
+        "xG":   _xg_signal(tip, h_xg, a_xg),
+        "form": min(_form_signal(tip, h_form, a_form), 1.0),
+        "pos":  _standing_signal(tip, h_stand, a_stand),
     }
-    top_signal = max(signals, key=signals.get)
-    edge       = value_edge(prob, bookie_odds)
-    edge_str   = f" — market underpricing by {edge}%" if edge and edge > 3 else ""
+    top = max(signals, key=signals.get)
+    edge = value_edge(prob, odds)
+    ev = f" — bookmaker underpricing by {edge}%" if edge and edge > 3 else ""
+    h = h_name.split()[0]; a = a_name.split()[0]
+    total_xg = round(h_xg + a_xg, 2)
 
-    h = h_name.split()[0]
-    a = a_name.split()[0]
-
-    reasons = {
-        ("xG", "HOME WIN"):   f"{h} generating significantly more xG ({h_xg} vs {a_xg}){edge_str}",
-        ("xG", "AWAY WIN"):   f"{a} outperforming on xG ({a_xg} vs {h_xg}), strong away threat{edge_str}",
-        ("xG", "DRAW"):       f"xG almost identical ({h_xg} vs {a_xg}), balanced match expected{edge_str}",
-        ("xG", "OVER 1.5"):   f"Combined xG of {round(h_xg+a_xg,2)} makes goals highly probable{edge_str}",
-        ("xG", "OVER 2.5"):   f"High combined xG ({round(h_xg+a_xg,2)}) supports a multi-goal game{edge_str}",
-        ("xG", "OVER 3.5"):   f"Both teams creating heavily — xG total {round(h_xg+a_xg,2)} backs goals{edge_str}",
-        ("xG", "BTTS"):       f"Both teams generating real chances — {h} {h_xg} xG, {a} {a_xg} xG{edge_str}",
-        ("form", "HOME WIN"):  f"{h} in strong form, {a} struggling recently{edge_str}",
-        ("form", "AWAY WIN"):  f"{a} arriving in excellent form, {h} dropping points lately{edge_str}",
-        ("form", "DRAW"):      f"Both sides drawing frequently — form points to stalemate{edge_str}",
-        ("form", "OVER 1.5"):  f"Both teams scoring consistently in recent games{edge_str}",
-        ("form", "OVER 2.5"):  f"Recent fixtures for both sides have been high-scoring{edge_str}",
-        ("form", "OVER 3.5"):  f"Form trend shows both teams involved in goals regularly{edge_str}",
-        ("form", "BTTS"):      f"Both teams have been scoring in nearly every game recently{edge_str}",
-        ("standing","HOME WIN"):f"{h} significantly higher in standings (#{h_stand} vs #{a_stand}){edge_str}",
-        ("standing","AWAY WIN"):f"{a} punching above their odds — #{a_stand} vs #{h_stand} in table{edge_str}",
-        ("standing","DRAW"):    f"Closely matched on standings (#{h_stand} vs #{a_stand}){edge_str}",
-        ("standing","OVER 1.5"):f"Both quality sides expected to create chances{edge_str}",
-        ("standing","OVER 2.5"):f"Table positions suggest an open, attacking game{edge_str}",
-        ("standing","OVER 3.5"):f"Both sides near top — high-quality, open encounter expected{edge_str}",
-        ("standing","BTTS"):    f"Neither side likely to keep a clean sheet given table positions{edge_str}",
+    templates = {
+        ("xG","HOME WIN"):  f"{h} generating more xG ({h_xg:.2f} vs {a_xg:.2f}) — clear home dominance in chance creation{ev}",
+        ("xG","AWAY WIN"):  f"{a} creating more chances per game ({a_xg:.2f} xG vs {h_xg:.2f}) — away threat is real{ev}",
+        ("xG","DRAW"):      f"xG almost identical ({h_xg:.2f} vs {a_xg:.2f}) — neither side pulling away in quality{ev}",
+        ("xG","GG"):        f"Both teams generating real chances — {h} {h_xg:.2f} xG, {a} {a_xg:.2f} xG. Both likely to score{ev}",
+        ("xG","NG"):        f"Limited chance creation overall — xG total only {total_xg}. Clean sheet possible{ev}",
+        ("xG","OVER 1.5"):  f"Combined xG of {total_xg} strongly supports a goals game{ev}",
+        ("xG","OVER 2.5"):  f"High combined xG ({total_xg}) — multi-goal game on{ev}",
+        ("xG","OVER 3.5"):  f"Both teams creating heavily — {total_xg} combined xG backs goals{ev}",
+        ("xG","UNDER 2.5"): f"Low combined xG ({total_xg}) — tight match, under has edge{ev}",
+        ("form","HOME WIN"):f"{h} in strong form recently · {a} not travelling well{ev}",
+        ("form","AWAY WIN"):f"{a} arrive in excellent form · {h} poor run at home{ev}",
+        ("form","DRAW"):    f"Both sides drawing frequently — form points to a stalemate{ev}",
+        ("form","GG"):      f"Both teams have been scoring consistently in recent fixtures{ev}",
+        ("form","OVER 1.5"):f"Recent games for both sides have produced goals{ev}",
+        ("form","OVER 2.5"):f"Both teams involved in high-scoring games recently{ev}",
+        ("pos","HOME WIN"): f"{h} significantly superior in the table (#{h_stand} vs #{a_stand}){ev}",
+        ("pos","AWAY WIN"):f"{a} punching above their odds — #{a_stand} vs #{h_stand} in the table{ev}",
+        ("pos","DRAW"):     f"Closely matched league positions — #{h_stand} vs #{a_stand}{ev}",
+        ("pos","GG"):       f"Both quality sides — neither likely to keep a clean sheet{ev}",
     }
-    key = (top_signal, tip_key)
-    return reasons.get(key, f"{prob}% probability backed by multiple data signals{edge_str}")
+    return templates.get((top, tip), f"{prob:.0f}% probability — multiple signals in agreement{ev}")
 
-# ── Combo tip builder ─────────────────────────────────────────────────────────
+# ── THREE-TIER TIP SELECTION ──────────────────────────────────────────────────
 
-def _build_combo_tips(h_win, draw, a_win, o15, o25, btts,
+def _pick_recommended(h_win, draw, a_win, o15, o25, o35, btts, gg_p, ng_p,
                       h_xg, a_xg, h_form, a_form, h_stand, a_stand,
-                      odds_h, odds_a, odds_o25, odds_btts,
-                      h_name, a_name):
+                      odds_h, odds_d, odds_a, odds_o15, odds_o25, odds_btts):
     """
-    Build risky combo tips from joint probabilities.
-    Joint P(A and B) = P(A) * P(B) assuming independence (approximate).
-    Only combos where joint prob >= 30% and conviction is high.
+    RECOMMENDED TIP: 1X2, GG/NG, Over/Under, Team Goals
+    Conviction-scored — not just highest probability.
+    """
+    candidates = {
+        "HOME WIN":  (h_win,  odds_h),
+        "DRAW":      (draw,   odds_d),
+        "AWAY WIN":  (a_win,  odds_a),
+        "GG":        (gg_p,   odds_btts),   # GG ≈ BTTS
+        "NG":        (ng_p,   None),
+        "OVER 1.5":  (o15,    odds_o15),
+        "OVER 2.5":  (o25,    odds_o25),
+        "OVER 3.5":  (o35,    None),
+        "UNDER 2.5": (100-o25, None),
+    }
+    scores = {}
+    for tip, (prob, odds) in candidates.items():
+        scores[tip] = conviction_score(tip, prob, odds, h_xg, a_xg,
+                                       h_form, a_form, h_stand, a_stand)
+    best = max(scores, key=scores.get)
+    prob, odds = candidates[best]
+    return best, round(prob, 1), scores[best], odds, scores
+
+def _pick_safest(rec_tip, h_win, draw, a_win, o15, h_xg, a_xg, h_form, a_form,
+                 odds_h, odds_d, odds_a):
+    """
+    SAFEST TIP: Over 1.5 Goals, Double Chance (1X/X2/12), Win Either Half
+    Always low-risk, high-probability options.
+    """
+    dc_1x  = round(h_win + draw, 1)    # 1X
+    dc_x2  = round(draw + a_win, 1)    # X2
+    dc_12  = round(h_win + a_win, 1)   # 12 (either team wins)
+
+    # Double chance odds (approximate: 1 / implied_prob)
+    odds_1x = round(1 / (dc_1x/100), 2) if dc_1x > 0 else None
+    odds_x2 = round(1 / (dc_x2/100), 2) if dc_x2 > 0 else None
+    odds_12 = round(1 / (dc_12/100), 2) if dc_12 > 0 else None
+
+    candidates = [
+        ("OVER 1.5 GOALS",    o15,   None),
+        ("DOUBLE CHANCE 1X",  dc_1x, odds_1x),
+        ("DOUBLE CHANCE X2",  dc_x2, odds_x2),
+        ("DOUBLE CHANCE 12",  dc_12, odds_12),
+    ]
+
+    # Win Either Half — approximate from 1X2
+    # P(home wins either half) ≈ P(home win) * 1.4 capped at 92
+    h_weh = min(round(h_win * 1.35, 1), 92.0)
+    a_weh = min(round(a_win * 1.35, 1), 88.0)
+    if h_win > a_win:
+        candidates.append(("HOME WIN EITHER HALF", h_weh, None))
+    else:
+        candidates.append(("AWAY WIN EITHER HALF", a_weh, None))
+
+    # Remove if same as recommended
+    candidates = [(t, p, o) for t, p, o in candidates if t != rec_tip]
+
+    # Pick best safe tip that is genuinely safe (high probability)
+    best = max(candidates, key=lambda x: x[1])
+    return best[0], best[1], best[2]
+
+def _pick_risky(h_win, draw, a_win, o15, o25, btts,
+                h_xg, a_xg, h_form, a_form,
+                odds_h, odds_a, odds_o25, odds_btts):
+    """
+    RISKY MARKET: HT/FT, Combo tips (1X2+GG, 1X2+Overs, WIN+Overs)
+    Joint probability markets — high odds, lower certainty.
     """
     combos = []
 
-    # All possible combos
-    candidates = [
-        # label,                    p1,          p2,          odds1,  odds2
-        ("HOME WIN + BTTS",          h_win/100,   btts/100,    odds_h, odds_btts),
-        ("AWAY WIN + BTTS",          a_win/100,   btts/100,    odds_a, odds_btts),
-        ("HOME WIN + OVER 2.5",      h_win/100,   o25/100,     odds_h, odds_o25),
-        ("AWAY WIN + OVER 2.5",      a_win/100,   o25/100,     odds_a, odds_o25),
-        ("OVER 2.5 + BTTS",          o25/100,     btts/100,    odds_o25, odds_btts),
-        ("OVER 1.5 + BTTS",          o15/100,     btts/100,    None,   odds_btts),
-        ("DRAW + BTTS",              draw/100,    btts/100,    None,   odds_btts),
-    ]
-
-    for label, p1, p2, o1, o2 in candidates:
-        joint_prob = round(p1 * p2 * 100, 1)
-        if joint_prob < 28:
-            continue
-
-        # Combo fair odds = product of fair odds for each part
-        fair_o1 = round(1 / max(p1, 0.01), 2)
-        fair_o2 = round(1 / max(p2, 0.01), 2)
-        combo_fair_odds = round(fair_o1 * fair_o2, 2)
-
-        # Quick agreement check: do xG and form both support this?
-        parts = label.split(" + ")
-        agreement = 0
-        for part in parts:
-            # Map combo part to signal key
-            sig_key = part.strip()
-            xg_s  = _xg_signal_for(sig_key, h_xg, a_xg)
-            frm_s = min(_form_signal_for(sig_key, h_form, a_form), 1.0)
-            if xg_s >= 0.5 and frm_s >= 0.5:
-                agreement += 1
-
-        if agreement < 1:
-            continue
-
+    # 1X2 + GG combos
+    if h_win > a_win:
         combos.append({
-            "label":      label,
-            "prob":       joint_prob,
-            "fair_odds":  combo_fair_odds,
-            "agreement":  agreement,
+            "tip":  "HOME WIN & GG",
+            "prob": round(h_win/100 * btts/100 * 100, 1),
+            "odds": round((1/(h_win/100)) * (1/(btts/100)), 2),
+        })
+        combos.append({
+            "tip":  "HOME WIN & OVER 2.5",
+            "prob": round(h_win/100 * o25/100 * 100, 1),
+            "odds": round((1/(h_win/100)) * (1/(o25/100)), 2),
+        })
+    else:
+        combos.append({
+            "tip":  "AWAY WIN & GG",
+            "prob": round(a_win/100 * btts/100 * 100, 1),
+            "odds": round((1/(a_win/100)) * (1/(btts/100)), 2),
+        })
+        combos.append({
+            "tip":  "AWAY WIN & OVER 2.5",
+            "prob": round(a_win/100 * o25/100 * 100, 1),
+            "odds": round((1/(a_win/100)) * (1/(o25/100)), 2),
         })
 
-    # Sort by joint probability * agreement
-    combos.sort(key=lambda x: x["prob"] * x["agreement"], reverse=True)
-    return combos[:3] if combos else []
+    combos.append({
+        "tip":  "GG & OVER 2.5",
+        "prob": round(btts/100 * o25/100 * 100, 1),
+        "odds": round((1/(btts/100)) * (1/(o25/100)), 2),
+    })
 
-# ── Safe alternate picker ─────────────────────────────────────────────────────
+    # HT/FT - most common: home team leads at HT and wins FT
+    if h_win > a_win:
+        ht_ft_prob = round(h_win * 0.55, 1)   # rough: home HT/FT ≈ 55% of home win prob
+        combos.append({"tip": f"HT/FT: HOME / HOME", "prob": ht_ft_prob, "odds": round(100/max(ht_ft_prob,1), 2)})
+    else:
+        ht_ft_prob = round(a_win * 0.52, 1)
+        combos.append({"tip": f"HT/FT: AWAY / AWAY", "prob": ht_ft_prob, "odds": round(100/max(ht_ft_prob,1), 2)})
 
-def _pick_safe_alternate(main_tip, tip_scores, h_xg, a_xg, btts, o15, o25):
-    """
-    Pick the safest credible alternate tip that:
-    - is different from the main tip
-    - has genuine backing (not just a big number)
-    - provides real alternative value
-    """
-    # Exclude main tip and build safe candidates
-    safe_priority = []
+    # Filter: keep only combos with prob > 15% and odds < 25
+    combos = [c for c in combos if c["prob"] >= 15 and c["odds"] <= 25]
+    combos.sort(key=lambda x: x["prob"], reverse=True)
+    return combos[:3] if combos else [{"tip": "GG & OVER 1.5", "prob": round(btts/100 * o15/100 * 100, 1), "odds": round(1/(btts/100) * 1/(o15/100), 2)}]
 
-    for tip, score in sorted(tip_scores.items(), key=lambda x: x[1], reverse=True):
-        if tip == main_tip:
-            continue
+# ── MAIN ANALYSIS ─────────────────────────────────────────────────────────────
 
-        # Over 1.5 is safe only if xG genuinely supports it
-        if tip == "OVER 1.5":
-            total_xg = h_xg + a_xg
-            if total_xg < 1.6:
-                continue  # don't recommend Over 1.5 when xG doesn't back it
-
-        # Over 2.5 as safe — only if o25 > 55 AND xG supports
-        if tip == "OVER 2.5":
-            if o25 < 55 or (h_xg + a_xg) < 2.2:
-                continue
-
-        # BTTS as safe — only if both teams have meaningful xG
-        if tip == "BTTS":
-            if h_xg < 0.7 or a_xg < 0.7:
-                continue
-
-        safe_priority.append((tip, score))
-
-    if not safe_priority:
-        # Fallback: just pick second-highest conviction that isn't main
-        fallback = [(t, s) for t, s in tip_scores.items() if t != main_tip]
-        fallback.sort(key=lambda x: x[1], reverse=True)
-        return fallback[0] if fallback else ("OVER 1.5", 50.0)
-
-    return safe_priority[0]
-
-# ── Main analysis ─────────────────────────────────────────────────────────────
-
-def analyze_match(api_data, league_id=None):
+def analyze_match(api_data, league_id=None, enriched=None):
     try:
         event  = api_data.get("event", {})
-        league = event.get("league", {})
-        l_id   = league_id or league.get("id", 1)
+        l_id   = league_id or event.get("league", {}).get("id", 1)
         h_name = event.get("home_team", "Home")
         a_name = event.get("away_team", "Away")
 
-        # ── Raw probabilities from API ──
         h_win  = float(api_data.get("prob_home_win",  33.3))
         draw   = float(api_data.get("prob_draw",      33.3))
         a_win  = float(api_data.get("prob_away_win",  33.3))
@@ -461,9 +366,24 @@ def analyze_match(api_data, league_id=None):
         h_xg   = float(api_data.get("expected_home_goals", 1.2))
         a_xg   = float(api_data.get("expected_away_goals", 1.0))
         conf   = float(api_data.get("confidence",     40.0))
-        likely = calculate_likely_score(h_xg, a_xg, o15)
+        gg_p   = btts                  # GG = BTTS
+        ng_p   = round(100 - btts, 1)  # NG = No BTTS
 
-        # ── Bookmaker odds ──
+        # Use real form from API Football if available, else Bzzoiro's
+        if enriched and enriched.get("home_form"):
+            h_form = enriched["home_form"]
+        else:
+            h_form = api_data.get("home_form", [])
+
+        if enriched and enriched.get("away_form"):
+            a_form = enriched["away_form"]
+        else:
+            a_form = api_data.get("away_form", [])
+
+        h_stand = api_data.get("home_standing")
+        a_stand = api_data.get("away_standing")
+
+        # Bookmaker odds (only use what API provides — never invent)
         odds_h    = event.get("odds_home")
         odds_d    = event.get("odds_draw")
         odds_a    = event.get("odds_away")
@@ -471,186 +391,113 @@ def analyze_match(api_data, league_id=None):
         odds_o25  = event.get("odds_over_25")
         odds_btts = event.get("odds_btts_yes")
 
-        # ── Team context ──
-        h_form  = api_data.get("home_form", [])
-        a_form  = api_data.get("away_form", [])
-        h_stand = api_data.get("home_standing")
-        a_stand = api_data.get("away_standing")
-
-        # ── CONVICTION SCORING for every tip ──
-        tip_probs = {
-            "HOME WIN":  h_win,
-            "AWAY WIN":  a_win,
-            "DRAW":      draw,
-            "OVER 1.5":  o15,
-            "OVER 2.5":  o25,
-            "OVER 3.5":  o35,
-            "BTTS":      btts,
-        }
-        tip_odds = {
-            "HOME WIN":  odds_h,
-            "AWAY WIN":  odds_a,
-            "DRAW":      odds_d,
-            "OVER 1.5":  odds_o15,
-            "OVER 2.5":  odds_o25,
-            "OVER 3.5":  None,
-            "BTTS":      odds_btts,
-        }
-
-        tip_scores = {}
-        tip_agreements = {}
-        for tip, prob in tip_probs.items():
-            tip_scores[tip] = conviction_score(
-                tip, prob, tip_odds.get(tip),
-                h_xg, a_xg, h_form, a_form, h_stand, a_stand
-            )
-            tip_agreements[tip] = _agreement_count(
-                tip, h_xg, a_xg, h_form, a_form, h_stand, a_stand
-            )
-
-        # ── Main tip = highest conviction ──
-        main_tip  = max(tip_scores, key=tip_scores.get)
-        main_prob = tip_probs[main_tip]
-        main_conv = tip_scores[main_tip]
-        main_odds = round(100 / max(main_prob, 1), 2)
-        main_edge = value_edge(main_prob, tip_odds.get(main_tip))
-        main_agree = tip_agreements[main_tip]
-        main_reason = _build_reason(
-            main_tip, h_xg, a_xg, h_form, a_form,
-            h_stand, a_stand, main_prob, tip_odds.get(main_tip),
-            h_name, a_name
-        )
-
-        # ── Safe alternate ──
-        safe_tip, safe_conv = _pick_safe_alternate(
-            main_tip, tip_scores, h_xg, a_xg, btts, o15, o25
-        )
-        safe_prob  = tip_probs[safe_tip]
-        safe_odds  = round(100 / max(safe_prob, 1), 2)
-        safe_edge  = value_edge(safe_prob, tip_odds.get(safe_tip))
-        safe_reason = _build_reason(
-            safe_tip, h_xg, a_xg, h_form, a_form,
-            h_stand, a_stand, safe_prob, tip_odds.get(safe_tip),
-            h_name, a_name
-        )
-
-        # ── Risky combo ──
-        combos = _build_combo_tips(
-            h_win, draw, a_win, o15, o25, btts,
+        # ── RECOMMENDED TIP ──
+        rec_tip, rec_prob, rec_conv, rec_odds, all_scores = _pick_recommended(
+            h_win, draw, a_win, o15, o25, o35, btts, gg_p, ng_p,
             h_xg, a_xg, h_form, a_form, h_stand, a_stand,
-            odds_h, odds_a, odds_o25, odds_btts,
-            h_name, a_name
+            odds_h, odds_d, odds_a, odds_o15, odds_o25, odds_btts
         )
-        risky = combos[0] if combos else {
-            "label":     f"{main_tip} + BTTS",
-            "prob":      round(main_prob * btts / 100, 1),
-            "fair_odds": round(main_odds * round(100/max(btts,1), 2), 2),
-            "agreement": 0,
-        }
+        rec_fair_odds = round(100 / max(rec_prob, 1), 2)
+        rec_edge      = value_edge(rec_prob, {
+            "HOME WIN": odds_h, "DRAW": odds_d, "AWAY WIN": odds_a,
+            "GG": odds_btts, "OVER 1.5": odds_o15, "OVER 2.5": odds_o25,
+        }.get(rec_tip))
+        rec_agree = _agreement_count(rec_tip, h_xg, a_xg, h_form, a_form, h_stand, a_stand)
+        rec_reason = _reason(rec_tip, h_xg, a_xg, h_form, a_form, h_stand, a_stand,
+                             rec_prob, {
+                                 "HOME WIN": odds_h, "DRAW": odds_d, "AWAY WIN": odds_a,
+                                 "GG": odds_btts, "OVER 2.5": odds_o25,
+                             }.get(rec_tip), h_name, a_name)
 
-        # ── Tag based on conviction + agreement ──
-        if main_conv >= 65 and main_agree >= 2:
-            tag = "ELITE VALUE"
-        elif main_conv >= 55 and main_agree >= 1:
+        # ── SAFEST TIP ──
+        safe_tip, safe_prob, safe_fair_odds = _pick_safest(
+            rec_tip, h_win, draw, a_win, o15, h_xg, a_xg, h_form, a_form,
+            odds_h, odds_d, odds_a
+        )
+
+        # ── RISKY COMBOS ──
+        risky_list = _pick_risky(
+            h_win, draw, a_win, o15, o25, btts,
+            h_xg, a_xg, h_form, a_form,
+            odds_h, odds_a, odds_o25, odds_btts
+        )
+        risky_main = risky_list[0]
+
+        # Tag
+        if rec_conv >= 65 and rec_agree >= 2:
+            tag = "ELITE PICK"
+        elif rec_conv >= 55 and rec_agree >= 1:
             tag = "STRONG PICK"
-        elif main_conv >= 45:
-            tag = "QUANT EDGE"
+        elif rec_conv >= 42:
+            tag = "SOLID TIP"
         else:
             tag = "MONITOR"
 
         return {
-            "tag":          tag,
-            "xg_h":         round(h_xg, 2),
-            "xg_a":         round(a_xg, 2),
-            "likely_score": likely,
-            "1x2":          {"home": round(h_win,1), "draw": round(draw,1), "away": round(a_win,1)},
-            "markets":      {
-                "over_15":  round(o15,1),
-                "over_25":  round(o25,1),
-                "over_35":  round(o35,1),
-                "under_25": round(100-o25,1),
-                "btts":     round(btts,1),
+            "tag":       tag,
+            "xg_h":      round(h_xg, 2),
+            "xg_a":      round(a_xg, 2),
+            "1x2":       {"home": round(h_win,1), "draw": round(draw,1), "away": round(a_win,1)},
+            "markets":   {"over_15": round(o15,1), "over_25": round(o25,1),
+                          "over_35": round(o35,1), "under_25": round(100-o25,1),
+                          "btts": round(btts,1), "gg": round(gg_p,1), "ng": round(ng_p,1)},
+            # Tip tiers
+            "recommended": {
+                "tip":    rec_tip,
+                "prob":   rec_prob,
+                "odds":   rec_fair_odds,
+                "edge":   rec_edge,
+                "conv":   rec_conv,
+                "agree":  rec_agree,
+                "reason": rec_reason,
             },
-            # Three-tier tip structure
-            "main": {
-                "tip":      main_tip,
-                "prob":     round(main_prob, 1),
-                "odds":     main_odds,
-                "edge":     main_edge,
-                "conv":     main_conv,
-                "agree":    main_agree,    # how many signals agree (0-3)
-                "reason":   main_reason,
+            "safest": {
+                "tip":    safe_tip,
+                "prob":   safe_prob,
+                "odds":   safe_fair_odds,
             },
-            "safe": {
-                "tip":      safe_tip,
-                "prob":     round(safe_prob, 1),
-                "odds":     safe_odds,
-                "edge":     safe_edge,
-                "reason":   safe_reason,
-            },
-            "risky": {
-                "tip":      risky["label"],
-                "prob":     risky["prob"],
-                "odds":     risky["fair_odds"],
-            },
-            # Legacy keys so app.py doesn't break
-            "rec":     {"t": main_tip,  "p": round(main_prob,1),  "odds": main_odds,  "edge": main_edge},
-            "second":  {"t": safe_tip,  "p": round(safe_prob,1)},
+            "risky":      risky_list,
+            "risky_main": risky_main,
+            # Legacy compatibility
+            "rec":     {"t": rec_tip, "p": rec_prob, "odds": rec_fair_odds, "edge": rec_edge},
+            "second":  {"t": safe_tip, "p": safe_prob},
             "confidence":   round(conf, 1),
             "momentum":     momentum_score(h_form, a_form, h_xg, a_xg),
-            "upset":        upset_index(h_win, a_win, h_form, a_form, h_stand, a_stand),
-            "style":        style_profile(h_xg, a_xg, o25, btts),
+            "style":        style_profile(h_xg, a_xg, btts),
             "form":         {"home": list(h_form)[-5:], "away": list(a_form)[-5:]},
             "standings":    {"home": h_stand, "away": a_stand},
         }
-
     except Exception as e:
         import traceback
-        print(f"[Predictor Error] {e}\n{traceback.format_exc()}")
+        print(f"[Predictor] {e}\n{traceback.format_exc()}")
         return None
 
-# ── ACCA builder ──────────────────────────────────────────────────────────────
-
 def pick_acca(matches, n=5, min_conv=42.0):
-    """
-    Select top N picks using conviction score, not raw probability.
-    This means the ACCA won't just be 5x Over 1.5.
-    """
+    """Build ACCA from top conviction picks, diversified by league and tip type."""
     scored = []
     for m in matches:
         l_id = m.get("event", {}).get("league", {}).get("id", 0)
         res  = analyze_match(m, l_id)
         if not res:
             continue
-        conv = res["main"]["conv"]
+        conv = res["recommended"]["conv"]
         if conv < min_conv:
             continue
-        scored.append({
-            "match":     m,
-            "result":    res,
-            "conv":      conv,
-            "league_id": l_id,
-        })
+        scored.append({"match": m, "result": res, "conv": conv, "league_id": l_id})
 
     scored.sort(key=lambda x: x["conv"], reverse=True)
-    picks        = []
-    league_count = {}
-    tip_count    = {}  # also diversify tips — max 2 of same tip type
-
+    picks = []; league_count = {}; tip_count = {}
     for s in scored:
         lg  = s["league_id"]
-        tip = s["result"]["main"]["tip"]
-        if league_count.get(lg, 0) >= 2:
-            continue
-        if tip_count.get(tip, 0) >= 2:
-            continue
+        tip = s["result"]["recommended"]["tip"]
+        if league_count.get(lg, 0) >= 2: continue
+        if tip_count.get(tip, 0) >= 2:   continue
         league_count[lg]  = league_count.get(lg, 0) + 1
         tip_count[tip]    = tip_count.get(tip, 0) + 1
         picks.append(s)
-        if len(picks) >= n:
-            break
+        if len(picks) >= n: break
 
     combined = 1.0
     for p in picks:
-        combined *= p["result"]["main"]["odds"]
+        combined *= p["result"]["recommended"]["odds"]
     return picks, round(combined, 2)
