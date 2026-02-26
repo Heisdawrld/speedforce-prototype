@@ -1,9 +1,11 @@
 from flask import Flask, render_template_string, request, redirect, url_for
 import match_predictor
+import os
 
+# 1. INITIALIZE APP (Must be before routes)
 app = Flask(__name__)
 
-# HIGH-END MOBILE CSS & WRAPPER
+# 2. BRANDED MOBILE LAYOUT
 LAYOUT = """
 <!DOCTYPE html>
 <html lang="en">
@@ -21,7 +23,7 @@ LAYOUT = """
 <body class="p-4 italic">
     <div class="max-w-md mx-auto min-h-screen flex flex-col">
         <header class="flex justify-between items-center py-4 mb-4 border-b border-white/5">
-            <h1 class="text-xl font-black tracking-tighter text-white">PRO<span class="text-green-500">PREDICTOR</span></h1>
+            <h1 class="text-xl font-black tracking-tighter text-white uppercase">PRO<span class="text-green-500">PREDICTOR</span></h1>
             <a href="/acca" class="text-[10px] font-black bg-green-500/10 text-green-500 px-3 py-1 rounded-full uppercase">ACCA Builder</a>
         </header>
         {{ content | safe }}
@@ -30,21 +32,25 @@ LAYOUT = """
 </html>
 """
 
+# 3. ROUTES
 @app.route("/")
 def hub():
     # Get fixtures from Bzzoiro
     events = match_predictor.get_data("events/", {"status": "NS"}) # Not Started
+    
     if not events:
-        return render_template_string(LAYOUT, content='<div class="text-center py-20 uppercase font-black opacity-20">No Live Fixtures</div>')
+        return render_template_string(LAYOUT, content='<div class="text-center py-20 uppercase font-black opacity-20">No Upcoming Fixtures Found</div>')
     
     # Simple pagination index
     idx = int(request.args.get('i', 0))
+    if idx < 0: idx = 0
     if idx >= len(events): idx = 0
     
     m = events[idx]
     analysis = match_predictor.get_structured_analysis(m['id'])
     
     if "error" in analysis:
+        # If this match has no prediction yet, try the next one
         return redirect(url_for('hub', i=idx+1))
 
     content = f'''
@@ -55,13 +61,13 @@ def hub():
 
     <div class="flex justify-around items-center mb-8">
         <div class="text-center w-1/3">
-            <div class="w-16 h-16 glass rounded-full mx-auto mb-2 flex items-center justify-center text-xl font-black text-white uppercase">{analysis['h_name'][0]}</div>
-            <p class="text-[10px] font-black uppercase text-zinc-400 leading-tight">{analysis['h_name']}</p>
+            <div class="w-16 h-16 glass rounded-full mx-auto mb-2 flex items-center justify-center text-xl font-black text-white uppercase">{analysis['event']['home_team']['name'][0]}</div>
+            <p class="text-[10px] font-black uppercase text-zinc-400 leading-tight">{analysis['event']['home_team']['name']}</p>
         </div>
         <div class="text-2xl font-black text-zinc-800 italic">VS</div>
         <div class="text-center w-1/3">
-            <div class="w-16 h-16 glass rounded-full mx-auto mb-2 flex items-center justify-center text-xl font-black text-white uppercase">{analysis['a_name'][0]}</div>
-            <p class="text-[10px] font-black uppercase text-zinc-400 leading-tight">{analysis['a_name']}</p>
+            <div class="w-16 h-16 glass rounded-full mx-auto mb-2 flex items-center justify-center text-xl font-black text-white uppercase">{analysis['event']['away_team']['name'][0]}</div>
+            <p class="text-[10px] font-black uppercase text-zinc-400 leading-tight">{analysis['event']['away_team']['name']}</p>
         </div>
     </div>
 
@@ -74,9 +80,9 @@ def hub():
             <span class="text-[9px] font-black text-zinc-600 uppercase tracking-widest">🔵 Recommended</span>
             <span class="text-2xl font-black text-green-500">{analysis['rec']['p']}%</span>
         </div>
-        <h2 class="text-2xl font-black text-white uppercase tracking-tighter mb-4">{analysis['rec']['t']}</h2>
+        <h2 class="text-2xl font-black text-white uppercase tracking-tighter mb-4 leading-tight">{analysis['rec']['t']}</h2>
         <div class="flex items-center gap-2 mb-4">
-             <span class="text-zinc-500 text-[10px] font-bold">ODDS:</span>
+             <span class="text-zinc-500 text-[10px] font-bold">EST. ODDS:</span>
              <span class="text-white font-black text-sm">{analysis['rec']['o']}</span>
         </div>
         <div class="space-y-1 border-t border-white/5 pt-4">
@@ -110,17 +116,17 @@ def hub():
     </div>
 
     <div class="mt-auto flex gap-2 pb-10">
-        <a href="/?i={idx-1}" class="flex-1 glass py-4 rounded-full text-center text-[10px] font-black uppercase text-zinc-600 btn-glow">Prev</a>
-        <a href="/?i={idx+1}" class="flex-3 bg-white text-black py-4 rounded-full text-center text-[10px] font-black uppercase flex-grow btn-glow shadow-[0_0_20px_rgba(255,255,255,0.2)]">Next Match</a>
+        <a href="/?i={idx-1}" class="flex-1 glass py-4 rounded-full text-center text-[10px] font-black uppercase text-zinc-400 btn-glow">Prev</a>
+        <a href="/?i={idx+1}" class="flex-[2] bg-white text-black py-4 rounded-full text-center text-[10px] font-black uppercase btn-glow shadow-[0_0_20px_rgba(255,255,255,0.2)]">Next Match</a>
     </div>
     '''
     return render_template_string(LAYOUT, content=content)
 
 @app.route("/acca")
 def acca():
-    # ACCA Logic: Pulls 4 Recommended Tips and combines them
-    content = '<div class="glass p-8 rounded-[3rem] text-center mt-10"><h2 class="text-2xl font-black text-white italic mb-4">ACCA BUILDER</h2><p class="text-zinc-500 text-[10px] font-bold uppercase tracking-widest">Generating 5.00 Odds Ticket...</p></div>'
+    content = '<div class="glass p-8 rounded-[3rem] text-center mt-10"><h2 class="text-2xl font-black text-white italic mb-4 uppercase">ACCA BUILDER</h2><p class="text-zinc-500 text-[10px] font-bold uppercase tracking-widest">Generating 5.00 Odds Ticket...</p><a href="/" class="text-green-500 text-[10px] mt-10 block uppercase">Back to Hub</a></div>'
     return render_template_string(LAYOUT, content=content)
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
