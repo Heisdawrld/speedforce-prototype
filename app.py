@@ -1,72 +1,60 @@
 from flask import Flask, render_template_string, request
 import requests
-import os
-from datetime import datetime, timedelta
-from match_predictor import API_KEY, BASE_URL, get_match_analysis
+from datetime import datetime
+import match_predictor
 
 app = Flask(__name__)
 
 LAYOUT = """
 <script src="https://cdn.tailwindcss.com"></script>
-<body class="bg-[#05070a] text-zinc-300 font-sans italic p-4 md:p-10 selection:bg-green-500/30">
+<body class="bg-[#05070a] text-zinc-300 font-sans italic p-4 md:p-10">
     <div class="max-w-4xl mx-auto flex justify-between items-center mb-10 border-b border-white/5 pb-6 uppercase font-black">
-        <h1 class="text-2xl text-white italic tracking-tighter uppercase">PRO <span class="text-green-500">PREDICTOR</span></h1>
+        <h1 class="text-2xl text-white italic tracking-tighter uppercase underline decoration-green-500">PRO <span class="text-green-500">PREDICTOR</span></h1>
         <div class="flex gap-4 text-[10px] text-zinc-500 tracking-widest"><a href="/">HUB</a> <a href="/acca">ACCA HUB</a></div>
     </div>
     <div class="max-w-4xl mx-auto">{{ content | safe }}</div>
 </body>
 """
 
-def get_badge(name):
-    return f"https://api.dicebear.com/7.x/initials/svg?seed={name}&backgroundColor=10141d&bold=true"
-
 @app.route("/")
 def home():
-    # Wider range to ensure matches are found
-    s_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-    e_date = (datetime.now() + timedelta(days=2)).strftime('%Y-%m-%d')
-    
-    params = {'met': 'Fixtures', 'APIkey': API_KEY, 'from': s_date, 'to': e_date}
+    today = datetime.now().strftime('%Y-%m-%d')
+    url = f"https://apiv3.apifootball.com/?action=get_events&from={today}&to={today}&APIkey={match_predictor.FOOTBALL_API_KEY}"
     try:
-        r = requests.get(BASE_URL, params=params).json()
-        matches = r.get('result', [])
+        matches = requests.get(url).json()
+        if "error" in matches: matches = []
     except: matches = []
     
     content = '<h2 class="text-green-500 text-[10px] font-black tracking-[0.4em] mb-8 uppercase text-center italic">ELITE DATA STREAM</h2>'
-    if not matches:
-        content += '<div class="text-center py-20 text-zinc-700 font-black uppercase tracking-widest">No Fixtures Found</div>'
-    
-    for m in matches:
-        m_id = str(m.get('event_key'))
-        h_t, a_t = m.get('event_home_team'), m.get('event_away_team')
-        h_l, a_l = m.get('home_team_logo', ''), m.get('away_team_logo', '')
+    for m in matches[:15]:
         content += f'''
-        <a href="/match?id={m_id}" class="flex justify-between items-center p-6 bg-[#0f1218] rounded-2xl mb-3 border border-white/5 hover:border-green-500/30 transition shadow-xl">
-            <div class="w-2/5 flex items-center justify-end gap-3 font-bold text-white text-xs uppercase text-right"><span class="truncate">{h_t}</span><img src="{h_l if h_l else get_badge(h_t)}" class="w-7 h-7 object-contain"></div>
-            <div class="text-[8px] text-zinc-900 font-black italic px-4 uppercase">ANALYZE</div>
-            <div class="w-2/5 flex items-center justify-start gap-3 font-bold text-white text-xs uppercase"><img src="{a_l if a_l else get_badge(a_t)}" class="w-7 h-7 object-contain"><span class="truncate">{a_t}</span></div>
+        <a href="/match?id={m['match_id']}" class="flex justify-between items-center p-6 bg-[#0f1218] rounded-2xl mb-3 border border-white/5 hover:border-green-500/30 transition shadow-xl">
+            <div class="w-2/5 flex items-center justify-end gap-3 font-bold text-white text-xs uppercase text-right"><span class="truncate">{m['match_hometeam_name']}</span><img src="{m['team_home_badge']}" class="w-7 h-7"></div>
+            <div class="text-[8px] text-zinc-900 font-black px-4 uppercase italic">ANALYZE</div>
+            <div class="w-2/5 flex items-center justify-start gap-3 font-bold text-white text-xs uppercase"><img src="{m['team_away_badge']}" class="w-7 h-7"><span class="truncate">{m['match_awayteam_name']}</span></div>
         </a>'''
     return render_template_string(LAYOUT, content=content)
 
 @app.route("/match")
 def match():
-    res = get_match_analysis(request.args.get("id"))
-    if "error" in res:
-        return render_template_string(LAYOUT, content='<div class="text-center mt-20 font-black text-zinc-600 uppercase">Analysis Not Available Yet</div>')
+    res = match_predictor.get_match_analysis(request.args.get("id"))
+    if "error" in res: return render_template_string(LAYOUT, content="<p class='text-center'>Data Syncing...</p>")
     
     content = f'''
     <div class="mb-6"><a href="/" class="text-zinc-600 font-bold text-[10px] uppercase tracking-widest">← RETURN</a></div>
-    <div class="flex justify-center items-center gap-10 mb-10">
-        <div class="text-center"><img src="{res['h_logo'] if res['h_logo'] else get_badge(res['h_name'])}" class="w-16 h-16 object-contain mb-2"><p class="text-[9px] font-black text-zinc-500 uppercase">{res['h_name']}</p></div>
+    
+    <div class="flex justify-center items-center gap-10 mb-6">
+        <div class="text-center"><img src="{res['h_logo']}" class="w-16 h-16 object-contain mb-2"><p class="text-[9px] font-black text-zinc-500 uppercase">{res['h_name']}</p></div>
         <div class="text-zinc-800 font-black italic text-2xl uppercase opacity-20 tracking-tighter">VS</div>
-        <div class="text-center"><img src="{res['a_logo'] if res['a_logo'] else get_badge(res['a_name'])}" class="w-16 h-16 object-contain mb-2"><p class="text-[9px] font-black text-zinc-500 uppercase">{res['a_name']}</p></div>
+        <div class="text-center"><img src="{res['a_logo']}" class="w-16 h-16 object-contain mb-2"><p class="text-[9px] font-black text-zinc-500 uppercase">{res['a_name']}</p></div>
     </div>
-    <div class="text-center mb-8"><span class="bg-green-500/10 text-green-500 border border-green-500/20 px-4 py-1 rounded-full text-[9px] font-black tracking-[0.3em] uppercase italic">{res['tag']}</span></div>
 
-    <div class="bg-gradient-to-br from-[#10141d] to-[#07090e] p-8 rounded-[2.5rem] border border-white/5 mb-6 shadow-2xl relative overflow-hidden">
+    <div class="text-center mb-8"><span class="bg-green-500/10 text-green-500 border border-green-500/20 px-4 py-1 rounded-full text-[9px] font-black tracking-[0.3em] uppercase">{res['tag']}</span></div>
+
+    <div class="bg-gradient-to-br from-[#10141d] to-[#07090e] p-8 rounded-[2.5rem] border border-white/5 mb-6 shadow-2xl relative">
         <div class="flex justify-between items-start mb-4">
             <span class="text-[9px] font-black text-zinc-500 tracking-widest uppercase italic">🔵 Recommended Tip</span>
-            <span class="text-4xl font-black text-green-500 italic tracking-tighter">{res['rec']['p']:.0f}%</span>
+            <span class="text-4xl font-black text-green-500 italic tracking-tighter">{res['rec']['p']}%</span>
         </div>
         <h2 class="text-3xl font-black text-white italic uppercase tracking-tighter mb-4 leading-none">{res['rec']['t']}</h2>
         <ul class="space-y-2 border-t border-white/5 pt-4">
@@ -75,15 +63,15 @@ def match():
     </div>
 
     <div class="grid grid-cols-2 gap-4 mb-10">
-        <div class="bg-[#0f1218] p-6 rounded-[2rem] border border-white/5 shadow-lg text-center">
-            <span class="text-[8px] text-zinc-600 font-black uppercase block mb-2 italic">🟢 Alternate (Safest)</span>
+        <div class="bg-[#0f1218] p-6 rounded-[2rem] border border-white/5 shadow-lg">
+            <span class="text-[8px] text-zinc-600 font-black uppercase block mb-2 italic tracking-widest">🟢 Alternate (Safest)</span>
             <h4 class="text-sm font-black text-white italic uppercase mb-1">{res['alt']['t']}</h4>
-            <p class="text-2xl font-black text-white italic opacity-40">{res['alt']['p']:.0f}%</p>
+            <p class="text-2xl font-black text-white italic opacity-40">{res['alt']['p']}%</p>
         </div>
-        <div class="bg-[#0f1218] p-6 rounded-[2rem] border border-white/5 shadow-lg text-center">
-            <span class="text-[8px] text-zinc-600 font-black uppercase block mb-2 italic">🔴 High Risk</span>
+        <div class="bg-[#0f1218] p-6 rounded-[2rem] border border-white/5 shadow-lg">
+            <span class="text-[8px] text-zinc-600 font-black uppercase block mb-2 italic tracking-widest">🔴 High Risk</span>
             <h4 class="text-sm font-black text-red-500 italic uppercase mb-1">{res['risk']['t']}</h4>
-            <p class="text-2xl font-black text-red-500 italic opacity-40">{res['risk']['p']:.0f}%</p>
+            <p class="text-2xl font-black text-red-500 italic opacity-40">{res['risk']['p']}%</p>
         </div>
     </div>
 
@@ -102,4 +90,4 @@ def match():
     return render_template_string(LAYOUT, content=content)
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
+    app.run(host='0.0.0.0', port=5000)
