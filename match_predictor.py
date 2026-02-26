@@ -1,74 +1,47 @@
-import requests
-import os
-from datetime import datetime, timedelta
+import math
 
-# SECURE KEYS
-BZZOIRO_TOKEN = os.environ.get("BZZOIRO_TOKEN", "631a48f45a20b3352ea3863f8aa23baf610710e2")
-FOOTBALL_DATA_KEY = os.environ.get("FOOTBALL_DATA_KEY", "9f4755094ff9435695b794f91f4c1474")
+def calculate_edge(prob, odds=None):
+    """Calculates value edge against market friction (simulated or real)"""
+    if not odds:
+        # Simulate a 5% margin bookmaker if live odds aren't passed
+        odds = round((1 / prob) * 0.95, 2)
+    edge = (prob * odds) - 1
+    return round(edge * 100, 2), odds
 
-def get_all_fixtures():
-    today = datetime.utcnow().strftime('%Y-%m-%d')
-    future = (datetime.utcnow() + timedelta(days=3)).strftime('%Y-%m-%d')
-    url = f"https://api.football-data.org/v4/matches?dateFrom={today}&dateTo={future}"
-    headers = {'X-Auth-Token': FOOTBALL_DATA_KEY}
-    try:
-        r = requests.get(url, headers=headers, timeout=10)
-        data = r.json()
-        return data.get('matches', []) if isinstance(data, dict) else []
-    except: return []
+def get_volatility(h_p, a_p, d_p):
+    """Volatility Index: Based on the spread of outcomes"""
+    spread = max(h_p, a_p, d_p) - min(h_p, a_p, d_p)
+    if spread < 0.2: return "HIGH"
+    if spread < 0.4: return "MODERATE"
+    return "LOW"
 
-def get_bzzoiro_predictions():
-    """Extracts 'results' only if the API response is a valid dictionary."""
-    url = "https://sports.bzzoiro.com/api/predictions/?upcoming=true"
-    headers = {"Authorization": f"Token {BZZOIRO_TOKEN}"}
-    try:
-        r = requests.get(url, headers=headers, timeout=10)
-        data = r.json()
-        if isinstance(data, dict):
-            return data.get('results', [])
-        return data if isinstance(data, list) else []
-    except: return []
-
-def normalize(name):
-    if not name: return ""
-    clean = str(name).lower().strip()
-    suffixes = [" fc", " afc", " as", " sc", " ud"]
-    for s in suffixes:
-        if clean.endswith(s): clean = clean[:-len(s)]
-    return clean.strip()
-
-def get_match_analysis(home_name, away_name, league_name, all_preds):
-    """Paranoid Data Extraction: Checks every key before accessing."""
-    h_norm = normalize(home_name)
-    p = None
-
-    if isinstance(all_preds, list):
-        for item in all_preds:
-            # Deep check to ensure we don't call .get on a string
-            if isinstance(item, dict):
-                event = item.get('event')
-                if isinstance(event, dict):
-                    h_team = event.get('home_team')
-                    if isinstance(h_team, dict):
-                        h_api_name = h_team.get('name')
-                        if normalize(h_api_name) == h_norm:
-                            p = item
-                            break
-
-    # Probability Fallbacks
-    is_ai = p is not None and isinstance(p, dict)
-    h_p = float(p.get('prob_home', 0.45)) if is_ai else 0.45
-    o25_p = float(p.get('prob_over_25', 0.52)) if is_ai else 0.52
-
-    # Odds Calculation
-    v = 0.9 + (abs(hash(str(league_name))) % 15) / 100
-    m_h_o = round((1 / (h_p * v)) * 0.95, 2)
-
+def analyze_match(data):
+    """Processes raw BetsAPI data into the Master Prompt format"""
+    # Extract raw probabilities from the API confidence or defaults
+    conf = data.get("confidence", 50) / 100
+    h_p = data.get("prob_home", conf * 0.6)
+    a_p = data.get("prob_away", (1-conf) * 0.4)
+    d_p = 1 - (h_p + a_p)
+    o25_p = data.get("prob_over_25", 0.50)
+    
+    # Tier 1: RECOMMENDED (Value Edge)
+    edge, calculated_odds = calculate_edge(h_p if h_p > a_p else a_p)
+    rec_tip = "HOME WIN" if h_p > a_p else "AWAY WIN"
+    
+    # Tier 2: SAFE (Highest Prob)
+    safe_p = o25_p + (1 - o25_p) * 0.6 # Derived Over 1.5
+    
+    # Tier 3: HIGH RISK
+    risk_tip = f"{rec_tip} & GG"
+    
     return {
-        "tag": "AI ANALYZED" if is_ai else "STATISTICAL",
-        "rec": {"t": "HOME WIN" if h_p > 0.5 else "OVER 2.5", "p": round(h_p*100, 1), "o": m_h_o, "e": round((h_p*m_h_o-1)*100, 2)},
-        "safe": {"t": "OVER 1.5", "p": 82.0, "o": "1.30"},
-        "risk": {"t": "DRAW", "p": 25.0, "o": "3.55"},
-        "form": {"h": ["W","W","D","L","W"], "a": ["L","D","L","W","L"]},
-        "stats": {"vol": "MODERATE"}
+        "tag": "STRONG HOME EDGE" if h_p > 0.6 else "UPSET LIKELY" if d_p > 0.35 else "HIGH SCORING",
+        "rec": {"t": rec_tip, "p": round(max(h_p, a_p)*100, 1), "o": calculated_odds, "e": edge},
+        "safe": {"t": "OVER 1.5 GOALS", "p": round(safe_p*100, 1), "o": 1.28},
+        "risk": {"t": risk_tip, "p": round((h_p * 0.5)*100, 1), "o": 3.85},
+        "vol": get_volatility(h_p, a_p, d_p),
+        "stats": {
+            "h_gls": "2.1", "a_gls": "1.4", 
+            "h_con": "0.9", "a_con": "1.8"
+        }
     }
