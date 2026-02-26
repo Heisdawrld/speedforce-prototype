@@ -519,36 +519,46 @@ def analyze_match(api_data, league_id=None, enriched=None):
         print(f"[Predictor] {e}\n{traceback.format_exc()}")
         return None
 
-def pick_acca(matches, n=5, min_conv=42.0):
-    """Build ACCA from top conviction picks, diversified by league and tip type."""
+def pick_acca(matches, n=5, min_conv=45.0):
+    """
+    Professional ACCA builder with strict quality gates.
+
+    Rules (hard gates - all must pass):
+      - Fair odds >= 1.25 per leg   (no junk odds)
+      - No AVOID or VERSATILE tags  (reliability required)
+      - No OVER 1.5 tips            (too low value)
+      - No DRAW tips                (specialist bet, kills accas)
+      - 1 pick per league max       (diversification)
+      - 1 pick per tip type max     (diversification)
+      - Minimum conviction 45
+    """
+    BLOCKED_TIPS = {"OVER 1.5", "DRAW"}
+    BLOCKED_TAGS = {"⚠️ AVOID", "🔄 VERSATILE"}
+    MIN_ODDS     = 1.25
+
     scored = []
     for m in matches:
         l_id = m.get("event", {}).get("league", {}).get("id", 0)
         res  = analyze_match(m, l_id)
         if not res:
             continue
-        conv = res["recommended"]["conv"]
-        if conv < min_conv:
-            continue
-        scored.append({"match": m, "result": res, "conv": conv, "league_id": l_id})
+        rec  = res["recommended"]
+        if rec["conv"] < min_conv:       continue
+        if rec["odds"] < MIN_ODDS:       continue
+        if rec["tip"] in BLOCKED_TIPS:   continue
+        if res.get("tag","") in BLOCKED_TAGS: continue
+        scored.append({"match": m, "result": res, "conv": rec["conv"], "league_id": l_id})
 
     scored.sort(key=lambda x: x["conv"], reverse=True)
-    picks = []; league_count = {}; tip_count = {}
+
+    picks = []; league_used = set(); tip_used = {}
     for s in scored:
         lg  = s["league_id"]
-        rec = s["result"]["recommended"]
-        tip = rec["tip"]
-        # Quality gates for ACCA inclusion:
-        # 1. No junk odds — minimum fair odds of 1.20 (prob <= 83%)
-        # 2. No AVOID-tagged matches
-        # 3. No OVER 1.5 in ACCA — too low value
-        if rec["odds"] < 1.20: continue
-        if s["result"]["tag"] in ("⚠️ AVOID",): continue
-        if tip == "OVER 1.5": continue
-        if league_count.get(lg, 0) >= 2: continue
-        if tip_count.get(tip, 0) >= 2:   continue
-        league_count[lg]  = league_count.get(lg, 0) + 1
-        tip_count[tip]    = tip_count.get(tip, 0) + 1
+        tip = s["result"]["recommended"]["tip"]
+        if lg in league_used:          continue
+        if tip_used.get(tip, 0) >= 1:  continue
+        league_used.add(lg)
+        tip_used[tip] = tip_used.get(tip, 0) + 1
         picks.append(s)
         if len(picks) >= n: break
 
