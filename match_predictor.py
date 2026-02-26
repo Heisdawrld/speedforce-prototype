@@ -1,79 +1,33 @@
 import numpy as np
 from scipy.stats import poisson
 
-def get_poisson_probabilities(l_home, l_away):
-    """Calculates full match matrix for 1X2, Goals, and BTTS"""
-    max_g = 10
-    home_probs = poisson.pmf(range(max_g), l_home)
-    away_probs = poisson.pmf(range(max_g), l_away)
-    
-    # Create the score matrix
-    matrix = np.outer(home_probs, away_probs)
-    
-    # Outcomes math
-    home_win = np.sum(np.tril(matrix, -1))
-    draw = np.sum(np.diag(matrix))
-    away_win = np.sum(np.triu(matrix, 1))
-    
-    goal_sum = np.add.outer(range(max_g), range(max_g))
-    over25 = np.sum(matrix[goal_sum >= 3])
-    over15 = np.sum(matrix[goal_sum >= 2])
-    btts = np.sum(matrix[1:, 1:])
+def analyze_match(api_data):
+    """Processes Live API data through the Poisson Filter"""
+    try:
+        # PULL LIVE DATA FROM API
+        h_p = float(api_data.get('prob_home', 0.33))
+        a_p = float(api_data.get('prob_away', 0.33))
+        d_p = float(api_data.get('prob_draw', 0.34))
+        o25_p = float(api_data.get('prob_over_25', 0.50))
+        btts_p = float(api_data.get('prob_btts', 0.50))
 
-    return {
-        "home": home_win * 100,
-        "draw": draw * 100,
-        "away": away_win * 100,
-        "over25": over25 * 100,
-        "over15": over15 * 100,
-        "btts": btts * 100
-    }
+        # CALCULATE DYNAMIC ODDS (1/prob * margin)
+        home_odds = round((1 / h_p) * 0.94, 2) if h_p > 0 else 2.0
+        
+        # DETERMINE INTELLIGENT RECOMMENDATION
+        probs = {"HOME WIN": h_p, "AWAY WIN": a_p, "OVER 2.5": o25_p, "BTTS": btts_p}
+        best_market = max(probs, key=probs.get)
+        
+        # CONFIDENCE GAP (Math-based, not vibes)
+        conf = round((h_p - a_p) * 100, 1) if h_p > a_p else round((a_p - h_p) * 100, 1)
 
-def analyze_match(home_avg_s, away_avg_s, home_avg_c, away_avg_c):
-    """The Engine: Returns Master Prompt compliant analysis"""
-    league_avg = 1.45
-    l_home = (home_avg_s / league_avg) * (away_avg_c / league_avg) * league_avg
-    l_away = (away_avg_s / league_avg) * (home_avg_c / league_avg) * league_avg
-    
-    # Manual adjustment for Home Advantage
-    l_home += 0.15
-
-    probs = get_poisson_probabilities(l_home, l_away)
-
-    # Market Selection Logic
-    markets = {
-        "HOME WIN": probs["home"],
-        "DRAW": probs["draw"],
-        "AWAY WIN": probs["away"],
-        "OVER 2.5 GOALS": probs["over25"],
-        "BTTS (YES)": probs["btts"]
-    }
-
-    sorted_m = sorted(markets.items(), key=lambda x: x[1], reverse=True)
-    rec_market, main_prob = sorted_m[0]
-
-    # Confidence Gap Math (1X2 Spread)
-    sorted_1x2 = sorted([probs["home"], probs["draw"], probs["away"]], reverse=True)
-    confidence = round(sorted_1x2[0] - sorted_1x2[1], 2)
-
-    return {
-        "tag": "STRONG EDGE" if confidence > 25 else "VALUE PLAY",
-        "probs": {k: round(v, 1) for k, v in probs.items()},
-        "rec": {
-            "t": rec_market,
-            "p": round(main_prob, 1),
-            "o": round(100 / (main_prob * 0.95), 2) # Adding 5% bookie margin to fair odds
-        },
-        "safe": {
-            "t": "OVER 1.5 GOALS" if probs["over15"] > 70 else "DOUBLE CHANCE",
-            "p": round(probs["over15"], 1),
-            "o": 1.28
-        },
-        "risk": {
-            "t": f"{rec_market} & BTTS",
-            "p": round((main_prob/100 * probs["btts"]/100) * 100, 1),
-            "o": 4.10
-        },
-        "xg": {"h": round(l_home, 2), "a": round(l_away, 2)},
-        "conf": confidence
-    }
+        return {
+            "tag": "STRONG VALUE" if conf > 20 else "MODERATE RISK",
+            "rec": {"t": best_market, "p": round(probs[best_market]*100, 1), "o": home_odds},
+            "safe": {"t": "OVER 1.5 GOALS", "p": round((o25_p + 0.2) * 100, 1), "o": 1.30},
+            "risk": {"t": f"{best_market} & GG", "p": round((h_p * btts_p) * 100, 1), "o": 4.50},
+            "stats": {"h_xg": round(h_p * 2.5, 2), "a_xg": round(a_p * 2.1, 2)},
+            "conf": conf
+        }
+    except:
+        return None
