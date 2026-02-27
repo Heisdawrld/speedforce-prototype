@@ -1,10 +1,10 @@
 “””
-match_predictor.py — ProPredictor Conviction Engine v4
+match_predictor.py – ProPredictor Conviction Engine v4
 
 TIP STRUCTURE (as defined by user):
-RECOMMENDED TIP  — 1X2, GG/NG, Overs/Unders, Team to Score
-SAFEST TIP       — Over 1.5 Goals, Double Chance (1X/X2/12), Win Either Half
-RISKY MARKET     — HT/FT, Combo (1X2+GG, 1X2+Overs, WIN+Overs)
+RECOMMENDED TIP  – 1X2, GG/NG, Overs/Unders, Team to Score
+SAFEST TIP       – Over 1.5 Goals, Double Chance (1X/X2/12), Win Either Half
+RISKY MARKET     – HT/FT, Combo (1X2+GG, 1X2+Overs, WIN+Overs)
 
 Conviction engine scores each tip across:
 
@@ -17,14 +17,14 @@ Conviction engine scores each tip across:
 
 import math
 
-# ── Poisson ───────────────────────────────────────────────────────────────────
+# – Poisson —————————————————————––
 
 def poisson_pmf(k, lam):
 if lam <= 0:
 return 1.0 if k == 0 else 0.0
 return (lam ** k) * math.exp(-lam) / math.factorial(k)
 
-# ── Form utilities ────────────────────────────────────────────────────────────
+# – Form utilities ————————————————————
 
 FORM_WEIGHTS = [1.0, 1.2, 1.4, 1.6, 1.8]
 FORM_VALUE   = {“W”: 1.0, “D”: 0.4, “L”: 0.0}
@@ -61,7 +61,7 @@ h_trend = form_trend(h_form)
 a_trend = form_trend(a_form)
 gap = abs(h_mom - a_mom)
 if gap < 8:
-narrative = “Momentum evenly balanced — neither side holds a clear edge”
+narrative = “Momentum evenly balanced – neither side holds a clear edge”
 elif h_mom > a_mom:
 narrative = f”Home side carrying the momentum ({h_trend.lower()} form)”
 else:
@@ -81,15 +81,15 @@ return round(edge * 100, 1)
 
 def style_profile(h_xg, a_xg, btts):
 total = h_xg + a_xg
-if total >= 3.0:   s = “High-scoring encounter expected — both teams creating freely”
-elif total >= 2.2: s = “Open game — goals likely from both ends”
-elif total >= 1.5: s = “Balanced midfield contest — goals possible but not guaranteed”
-else:              s = “Defensive game likely — set pieces and moments of quality will decide”
-if btts >= 65:     s += “ · Both teams likely to find the net”
-elif btts <= 35:   s += “ · Clean sheet on the cards”
+if total >= 3.0:   s = “High-scoring encounter expected – both teams creating freely”
+elif total >= 2.2: s = “Open game – goals likely from both ends”
+elif total >= 1.5: s = “Balanced midfield contest – goals possible but not guaranteed”
+else:              s = “Defensive game likely – set pieces and moments of quality will decide”
+if btts >= 65:     s += “ * Both teams likely to find the net”
+elif btts <= 35:   s += “ * Clean sheet on the cards”
 return s
 
-# ── xG / Form / Standing signals ─────────────────────────────────────────────
+# – xG / Form / Standing signals ———————————————
 
 def _xg_signal(tip, h_xg, a_xg):
 total = max(h_xg + a_xg, 0.1)
@@ -168,16 +168,16 @@ s_value    = _value_signal(prob, bookie_odds)
 
 ```
 # Normalised probability per market category.
-# Goals markets have high baselines — Over 1.5 at 88% is routine.
-# 1X2 tips at 55%+ are genuinely meaningful — don't let Over 1.5 drown them.
+# Goals markets have high baselines -- Over 1.5 at 88% is routine.
+# 1X2 tips at 55%+ are genuinely meaningful -- don't let Over 1.5 drown them.
 norm_map = {
-    "OVER 1.5":  (78, 97),   # very high baseline — only truly elite scores matter
+    "OVER 1.5":  (78, 97),   # very high baseline -- only truly elite scores matter
     "OVER 2.5":  (48, 85),
     "OVER 3.5":  (22, 62),
     "UNDER 2.5": (22, 65),
     "GG":        (48, 82),
     "NG":        (25, 65),
-    "HOME WIN":  (33, 82),   # 1X2 — any conviction above 33% is signal
+    "HOME WIN":  (33, 82),   # 1X2 -- any conviction above 33% is signal
     "AWAY WIN":  (25, 75),
     "DRAW":      (22, 45),
 }
@@ -195,7 +195,7 @@ raw = (s_prob * 0.30 + s_xg * 0.28 + s_form * 0.22 +
 return round(raw * 100, 2)
 ```
 
-# ── Reason builder ────────────────────────────────────────────────────────────
+# – Reason builder ————————————————————
 
 def _reason(tip, h_xg, a_xg, h_form, a_form, h_stand, a_stand, prob, odds, h_name, a_name):
 signals = {
@@ -205,44 +205,44 @@ signals = {
 }
 top = max(signals, key=signals.get)
 edge = value_edge(prob, odds)
-ev = f” — bookmaker underpricing by {edge}%” if edge and edge > 3 else “”
+ev = f” – bookmaker underpricing by {edge}%” if edge and edge > 3 else “”
 h = h_name.split()[0]; a = a_name.split()[0]
 total_xg = round(h_xg + a_xg, 2)
 
 ```
 templates = {
-    ("xG","HOME WIN"):  f"{h} generating more xG ({h_xg:.2f} vs {a_xg:.2f}) — clear home dominance in chance creation{ev}",
-    ("xG","AWAY WIN"):  f"{a} creating more chances per game ({a_xg:.2f} xG vs {h_xg:.2f}) — away threat is real{ev}",
-    ("xG","DRAW"):      f"xG almost identical ({h_xg:.2f} vs {a_xg:.2f}) — neither side pulling away in quality{ev}",
-    ("xG","GG"):        f"Both teams generating real chances — {h} {h_xg:.2f} xG, {a} {a_xg:.2f} xG. Both likely to score{ev}",
-    ("xG","NG"):        f"Limited chance creation overall — xG total only {total_xg}. Clean sheet possible{ev}",
+    ("xG","HOME WIN"):  f"{h} generating more xG ({h_xg:.2f} vs {a_xg:.2f}) -- clear home dominance in chance creation{ev}",
+    ("xG","AWAY WIN"):  f"{a} creating more chances per game ({a_xg:.2f} xG vs {h_xg:.2f}) -- away threat is real{ev}",
+    ("xG","DRAW"):      f"xG almost identical ({h_xg:.2f} vs {a_xg:.2f}) -- neither side pulling away in quality{ev}",
+    ("xG","GG"):        f"Both teams generating real chances -- {h} {h_xg:.2f} xG, {a} {a_xg:.2f} xG. Both likely to score{ev}",
+    ("xG","NG"):        f"Limited chance creation overall -- xG total only {total_xg}. Clean sheet possible{ev}",
     ("xG","OVER 1.5"):  f"Combined xG of {total_xg} strongly supports a goals game{ev}",
-    ("xG","OVER 2.5"):  f"High combined xG ({total_xg}) — multi-goal game on{ev}",
-    ("xG","OVER 3.5"):  f"Both teams creating heavily — {total_xg} combined xG backs goals{ev}",
-    ("xG","UNDER 2.5"): f"Low combined xG ({total_xg}) — tight match, under has edge{ev}",
-    ("form","HOME WIN"):f"{h} in strong form recently · {a} not travelling well{ev}",
-    ("form","AWAY WIN"):f"{a} arrive in excellent form · {h} poor run at home{ev}",
-    ("form","DRAW"):    f"Both sides drawing frequently — form points to a stalemate{ev}",
+    ("xG","OVER 2.5"):  f"High combined xG ({total_xg}) -- multi-goal game on{ev}",
+    ("xG","OVER 3.5"):  f"Both teams creating heavily -- {total_xg} combined xG backs goals{ev}",
+    ("xG","UNDER 2.5"): f"Low combined xG ({total_xg}) -- tight match, under has edge{ev}",
+    ("form","HOME WIN"):f"{h} in strong form recently * {a} not travelling well{ev}",
+    ("form","AWAY WIN"):f"{a} arrive in excellent form * {h} poor run at home{ev}",
+    ("form","DRAW"):    f"Both sides drawing frequently -- form points to a stalemate{ev}",
     ("form","GG"):      f"Both teams have been scoring consistently in recent fixtures{ev}",
     ("form","OVER 1.5"):f"Recent games for both sides have produced goals{ev}",
     ("form","OVER 2.5"):f"Both teams involved in high-scoring games recently{ev}",
     ("pos","HOME WIN"): f"{h} significantly superior in the table (#{h_stand} vs #{a_stand}){ev}",
-    ("pos","AWAY WIN"):f"{a} punching above their odds — #{a_stand} vs #{h_stand} in the table{ev}",
-    ("pos","DRAW"):     f"Closely matched league positions — #{h_stand} vs #{a_stand}{ev}",
-    ("pos","GG"):       f"Both quality sides — neither likely to keep a clean sheet{ev}",
+    ("pos","AWAY WIN"):f"{a} punching above their odds -- #{a_stand} vs #{h_stand} in the table{ev}",
+    ("pos","DRAW"):     f"Closely matched league positions -- #{h_stand} vs #{a_stand}{ev}",
+    ("pos","GG"):       f"Both quality sides -- neither likely to keep a clean sheet{ev}",
 }
-return templates.get((top, tip), f"{prob:.0f}% probability — multiple signals in agreement{ev}")
+return templates.get((top, tip), f"{prob:.0f}% probability -- multiple signals in agreement{ev}")
 ```
 
-# ── THREE-TIER TIP SELECTION ──────────────────────────────────────────────────
+# – THREE-TIER TIP SELECTION –––––––––––––––––––––––––
 
 def _pick_recommended(h_win, draw, a_win, o15, o25, o35, btts, gg_p, ng_p,
 h_xg, a_xg, h_form, a_form, h_stand, a_stand,
 odds_h, odds_d, odds_a, odds_o15, odds_o25, odds_btts):
 “””
-RECOMMENDED TIP — Market hierarchy rules:
+RECOMMENDED TIP – Market hierarchy rules:
 - DRAW is BANNED from Recommended. Draws belong in Risky.
-- OVER 1.5 is BANNED from Recommended. Too basic — belongs in Safest.
+- OVER 1.5 is BANNED from Recommended. Too basic – belongs in Safest.
 - NG (No Goals) is BANNED. Rarely meaningful.
 - Minimum probability threshold: tip must be >= 45% to qualify.
 - If only Over 1.5 / Draw qualify, fall back to HOME WIN or AWAY WIN.
@@ -291,7 +291,7 @@ candidates = [
     ("DOUBLE CHANCE 12",  dc_12, odds_12),
 ]
 
-# Win Either Half — approximate from 1X2
+# Win Either Half -- approximate from 1X2
 # P(home wins either half) ≈ P(home win) * 1.4 capped at 92
 h_weh = min(round(h_win * 1.35, 1), 92.0)
 a_weh = min(round(a_win * 1.35, 1), 88.0)
@@ -314,7 +314,7 @@ h_xg, a_xg, h_form, a_form,
 odds_h, odds_a, odds_o25, odds_btts):
 “””
 RISKY MARKET: DRAW, HT/FT, Combo tips (1X2+GG, 1X2+Overs, WIN+Overs)
-Draws live here — they are specialist high-risk selections.
+Draws live here – they are specialist high-risk selections.
 “””
 combos = []
 
@@ -412,26 +412,26 @@ if ag > 0: btts_a += pa
 btts = btts_h * btts_a
 return round(o25*100,2), round(o15*100,2), round(btts*100,2)
 
-# ── MAIN ANALYSIS ─────────────────────────────────────────────────────────────
+# – MAIN ANALYSIS ———————————————————––
 
 def analyze_match(api_data, league_id=None, enriched=None):
 “””
 Core analysis with three enrichment layers wired in:
 
 ```
-LAYER 1 — Squad Strength Index
-  enriched["home_squad"] / ["away_squad"] → penalty multiplier on xG
-  A team missing 2 key attackers gets an 84% xG multiplier (−16%)
+LAYER 1 -- Squad Strength Index
+  enriched["home_squad"] / ["away_squad"] -> penalty multiplier on xG
+  A team missing 2 key attackers gets an 84% xG multiplier (-16%)
   Attack/defense scores shift home/away win probabilities
 
-LAYER 2 — Rolling xG
+LAYER 2 -- Rolling xG
   enriched["home_rolling_xg"] / ["away_rolling_xg"]
   Replaces season-average xG with last-5-match goals average
-  Trend momentum factor: RISING→×1.12, FALLING→×0.88
+  Trend momentum factor: RISING->x1.12, FALLING->x0.88
 
-LAYER 3 — Home/Away Splits
+LAYER 3 -- Home/Away Splits
   enriched["home_stats"]["splits"] / ["away_stats"]["splits"]
-  Home win rate at home, away win rate on the road — venue-specific
+  Home win rate at home, away win rate on the road -- venue-specific
   Boosts or dampens 1X2 conviction based on actual venue record
 """
 try:
@@ -467,18 +467,18 @@ try:
     odds_o25  = event.get("odds_over_25")
     odds_btts = event.get("odds_btts_yes")
 
-    # ══════════════════════════════════════════════════
-    # LAYER 2 — Rolling xG adjustment
+    # ==================================================
+    # LAYER 2 -- Rolling xG adjustment
     # Replaces base xG with recent-form goals average.
     # Falls back to Bzzoiro xG if no rolling data.
-    # ══════════════════════════════════════════════════
+    # ==================================================
     h_rxg = enriched.get("home_rolling_xg") if enriched else None
     a_rxg = enriched.get("away_rolling_xg") if enriched else None
 
     if h_rxg and h_rxg["rolling_for"] > 0:
-        # Blend: 60% rolling, 40% season xG — don't fully abandon season data
+        # Blend: 60% rolling, 40% season xG -- don't fully abandon season data
         h_xg = round(h_rxg["rolling_for"] * 0.60 + h_xg * 0.40, 3)
-        h_xg *= h_rxg["momentum_factor"]  # RISING→×1.12, FALLING→×0.88
+        h_xg *= h_rxg["momentum_factor"]  # RISING->x1.12, FALLING->x0.88
         h_xg = round(max(0.3, h_xg), 3)
 
     if a_rxg and a_rxg["rolling_for"] > 0:
@@ -486,10 +486,10 @@ try:
         a_xg *= a_rxg["momentum_factor"]
         a_xg = round(max(0.3, a_xg), 3)
 
-    # ══════════════════════════════════════════════════
-    # LAYER 1 — Squad Strength: xG penalty + prob adjustment
+    # ==================================================
+    # LAYER 1 -- Squad Strength: xG penalty + prob adjustment
     # Applied AFTER rolling xG so both layers stack.
-    # ══════════════════════════════════════════════════
+    # ==================================================
     h_sq = enriched.get("home_squad") if enriched else None
     a_sq = enriched.get("away_squad") if enriched else None
 
@@ -530,10 +530,10 @@ try:
         draw  = round(draw  / total_1x2 * 100, 2)
         a_win = round(a_win / total_1x2 * 100, 2)
 
-    # ══════════════════════════════════════════════════
-    # LAYER 3 — Home/Away splits: venue conviction boost
+    # ==================================================
+    # LAYER 3 -- Home/Away splits: venue conviction boost
     # Applied to xG signals used in conviction scoring.
-    # ══════════════════════════════════════════════════
+    # ==================================================
     venue_boost_h = 1.0
     venue_boost_a = 1.0
     h_stats = enriched.get("home_stats") if enriched else None
@@ -543,7 +543,7 @@ try:
         sp = h_stats["splits"]
         hwr = sp.get("home_win_rate", 0.5)
         # If home team wins at home > 60%, boost home xG signal slightly
-        # If < 30%, penalise — they're genuinely bad at home
+        # If < 30%, penalise -- they're genuinely bad at home
         if hwr >= 0.60:   venue_boost_h = 1.10
         elif hwr >= 0.50: venue_boost_h = 1.05
         elif hwr <= 0.30: venue_boost_h = 0.90
@@ -552,14 +552,14 @@ try:
     if a_stats and a_stats.get("splits"):
         sp = a_stats["splits"]
         awr = sp.get("away_win_rate", 0.3)
-        # Away teams winning on the road > 40% → genuinely dangerous away
+        # Away teams winning on the road > 40% -> genuinely dangerous away
         if awr >= 0.40:   venue_boost_a = 1.08
         elif awr >= 0.30: venue_boost_a = 1.02
         elif awr <= 0.15: venue_boost_a = 0.90
         a_xg = round(a_xg * venue_boost_a, 3)
 
     # Recalculate goal market probabilities from adjusted xG using Poisson
-    # This is the key step — all three layers flow through to the final markets
+    # This is the key step -- all three layers flow through to the final markets
     if (h_sq or h_rxg) and (h_xg != float(api_data.get("expected_home_goals", 1.2)) or
                               a_xg != float(api_data.get("expected_away_goals", 1.0))):
         o25_adj, o15_adj, btts_adj = _goals_from_xg(h_xg, a_xg)
@@ -570,7 +570,7 @@ try:
         gg_p = btts
         ng_p = round(100 - btts, 1)
 
-    # ── RECOMMENDED TIP ──
+    # -- RECOMMENDED TIP --
     rec_tip, rec_prob, rec_conv, rec_odds, all_scores = _pick_recommended(
         h_win, draw, a_win, o15, o25, o35, btts, gg_p, ng_p,
         h_xg, a_xg, h_form, a_form, h_stand, a_stand,
@@ -588,13 +588,13 @@ try:
                              "GG": odds_btts, "OVER 2.5": odds_o25,
                          }.get(rec_tip), h_name, a_name)
 
-    # ── SAFEST TIP ──
+    # -- SAFEST TIP --
     safe_tip, safe_prob, safe_fair_odds = _pick_safest(
         rec_tip, h_win, draw, a_win, o15, h_xg, a_xg, h_form, a_form,
         odds_h, odds_d, odds_a
     )
 
-    # ── RISKY COMBOS ──
+    # -- RISKY COMBOS --
     risky_list = _pick_risky(
         h_win, draw, a_win, o15, o25, btts,
         h_xg, a_xg, h_form, a_form,
@@ -602,7 +602,7 @@ try:
     )
     risky_main = risky_list[0]
 
-    # ── Smart tagging system ──
+    # -- Smart tagging system --
     # Slump detection: 3+ consecutive losses
     h_slump = (list(h_form[-3:]).count("L") >= 3) if len(h_form) >= 3 else False
     a_slump = (list(a_form[-3:]).count("L") >= 3) if len(a_form) >= 3 else False
