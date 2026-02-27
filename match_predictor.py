@@ -15,6 +15,27 @@ Conviction engine scores each tip across:
 """
 
 import math
+try:
+    import database as _db
+    _HAS_DB = True
+except ImportError:
+    _HAS_DB = False
+
+_calibration_cache = {"data": {}, "loaded_at": None}
+
+def _get_calibration():
+    """Load market calibration from DB. Cached 1 hour."""
+    import time
+    now = time.time()
+    if (_calibration_cache["loaded_at"] is None or
+            now - _calibration_cache["loaded_at"] > 3600):
+        if _HAS_DB:
+            try:
+                _calibration_cache["data"] = _db.get_market_calibration()
+                _calibration_cache["loaded_at"] = now
+            except:
+                pass
+    return _calibration_cache["data"]
 
 # -- Poisson -------------------------------------------------------------------
 
@@ -190,7 +211,19 @@ def conviction_score(tip, prob, bookie_odds, h_xg, a_xg, h_form, a_form, h_stand
 
     raw = (s_prob * 0.30 + s_xg * 0.28 + s_form * 0.22 +
            s_standing * 0.12 + s_value * 0.08)
-    return round(raw * 100, 2)
+    score = round(raw * 100, 2)
+
+    # Apply calibration factor from historical results
+    # If HOME WIN has been hitting 72% when we say 65%, boost conviction
+    # Only applied when 20+ samples exist (reliable signal)
+    cal = _get_calibration()
+    if tip in cal and cal[tip]["total"] >= 20:
+        cf = cal[tip]["calibration_factor"]
+        # Cap adjustment: max 20% boost or 20% reduction
+        cf = max(0.80, min(1.20, cf))
+        score = round(score * cf, 2)
+
+    return min(100.0, score)
 
 # -- Reason builder ------------------------------------------------------------
 
