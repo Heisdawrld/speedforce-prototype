@@ -768,11 +768,12 @@ document.querySelectorAll('.pfill').forEach(el=>{
 fetch('/api/quota').then(r=>r.json()).then(d=>{
   const b=document.getElementById('quota-badge');
   if(b&&d.remaining!==undefined){
-    b.textContent=d.remaining+' API';
+    b.textContent=d.remaining+' calls left';
     b.style.display='';
     if(d.remaining<20) b.style.color='var(--r)';
     else if(d.remaining<50) b.style.color='var(--w)';
     else b.style.color='var(--g)';
+    b.title='API Football: '+d.used+' used of 100 today. Resets at midnight UTC.';
   }
 }).catch(()=>{});
 // Search
