@@ -492,6 +492,52 @@ def analyze_match(api_data, league_id=None, enriched=None):
         odds_btts = event.get("odds_btts_yes")
 
         # ==================================================
+        # TEAM PROFILE INTELLIGENCE
+        # Read real per-team performance from our own tracker.
+        # Arsenal at home: W8 D1 L1, scores 2.3/game, concedes 0.8/game
+        # This data comes purely from our settled results -- zero API calls.
+        # Blended carefully: 5 matches = 10% weight, 20+ matches = 40% weight
+        # So the model is humble early, confident after real evidence.
+        # ==================================================
+        h_profile = None; a_profile = None
+        if _HAS_DB:
+            try:
+                h_profile = _db.get_team_profile(h_name, venue="home", min_matches=5)
+                a_profile = _db.get_team_profile(a_name, venue="away", min_matches=5)
+            except:
+                pass
+
+        if h_profile:
+            played = h_profile["played"]
+            blend  = min(0.40, played * 0.02)  # 5 matches=10%, 20=40%
+            # Blend real avg goals scored into h_xg
+            h_xg = round(h_xg * (1 - blend) + h_profile["avg_scored"] * blend, 3)
+            # Blend real avg goals conceded into a_xg (strong defence = fewer away goals)
+            def_blend = min(0.30, played * 0.015)
+            a_xg = round(a_xg * (1 - def_blend) + h_profile["avg_conceded"] * def_blend, 3)
+            # Adjust home win probability from real win rate
+            if played >= 8:
+                prob_blend = min(0.25, played * 0.01)
+                h_win = round(h_win * (1 - prob_blend) + h_profile["win_rate"] * prob_blend, 2)
+
+        if a_profile:
+            played = a_profile["played"]
+            blend  = min(0.40, played * 0.02)
+            a_xg = round(a_xg * (1 - blend) + a_profile["avg_scored"] * blend, 3)
+            def_blend = min(0.30, played * 0.015)
+            h_xg = round(h_xg * (1 - def_blend) + a_profile["avg_conceded"] * def_blend, 3)
+            if played >= 8:
+                prob_blend = min(0.25, played * 0.01)
+                a_win = round(a_win * (1 - prob_blend) + a_profile["win_rate"] * prob_blend, 2)
+
+        # Re-normalise after team profile adjustments
+        _tot = h_win + draw + a_win
+        if _tot > 0:
+            h_win = round(h_win / _tot * 100, 2)
+            draw  = round(draw  / _tot * 100, 2)
+            a_win = round(a_win / _tot * 100, 2)
+
+        # ==================================================
         # LAYER 2 -- Rolling xG adjustment
         # Replaces base xG with recent-form goals average.
         # Falls back to Bzzoiro xG if no rolling data.
@@ -582,10 +628,21 @@ def analyze_match(api_data, league_id=None, enriched=None):
             elif awr <= 0.15: venue_boost_a = 0.90
             a_xg = round(a_xg * venue_boost_a, 3)
 
+        # Team profile GG/Over25 blend from real data
+        if h_profile and a_profile and h_profile["played"] >= 5 and a_profile["played"] >= 5:
+            n = min(h_profile["played"], a_profile["played"])
+            blend = min(0.30, n * 0.015)
+            real_gg  = (h_profile["gg_rate"]     + a_profile["gg_rate"])     / 2
+            real_o25 = (h_profile["over25_rate"]  + a_profile["over25_rate"]) / 2
+            gg_p = round(gg_p * (1 - blend) + real_gg  * blend, 1)
+            btts = gg_p
+            o25  = round(o25  * (1 - blend) + real_o25 * blend, 1)
+            ng_p = round(100 - gg_p, 1)
+
         # Recalculate goal market probabilities from adjusted xG using Poisson
-        # This is the key step -- all three layers flow through to the final markets
-        if (h_sq or h_rxg) and (h_xg != float(api_data.get("expected_home_goals", 1.2)) or
-                                  a_xg != float(api_data.get("expected_away_goals", 1.0))):
+        if (h_sq or h_rxg or h_profile) and (
+                h_xg != float(api_data.get("expected_home_goals", 1.2)) or
+                a_xg != float(api_data.get("expected_away_goals", 1.0))):
             o25_adj, o15_adj, btts_adj = _goals_from_xg(h_xg, a_xg)
             # Blend: 50% model recalc, 50% Bzzoiro original (don't fully override)
             o25  = round(o25  * 0.5 + o25_adj  * 0.5, 2)
