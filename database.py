@@ -54,6 +54,29 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_pred_market ON predictions(market);
         CREATE INDEX IF NOT EXISTS idx_pred_result ON predictions(result);
         CREATE INDEX IF NOT EXISTS idx_pred_date   ON predictions(match_date);
+
+        CREATE TABLE IF NOT EXISTS team_memory (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            team_name      TEXT NOT NULL,
+            opponent       TEXT NOT NULL,
+            league         TEXT,
+            market         TEXT NOT NULL,
+            predicted_prob REAL,
+            actual_win     INTEGER,
+            logged_at      TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_tm_team   ON team_memory(team_name);
+        CREATE INDEX IF NOT EXISTS idx_tm_market ON team_memory(market);
+
+        CREATE TABLE IF NOT EXISTS market_calibration (
+            market             TEXT PRIMARY KEY,
+            total              INTEGER DEFAULT 0,
+            wins               INTEGER DEFAULT 0,
+            avg_prob           REAL DEFAULT 50.0,
+            hit_rate           REAL DEFAULT 50.0,
+            calibration_factor REAL DEFAULT 1.0,
+            last_updated       TEXT
+        );
         """)
         # -- Safe migration: add new columns if they don't exist --
         # This handles both fresh DBs and existing deployed DBs on Render
@@ -239,6 +262,89 @@ def get_recent_pending(limit=50):
             ORDER BY logged_at ASC LIMIT ?
         """, (limit,)).fetchall()
     return [dict(r) for r in rows]
+
+
+def update_team_memory(home_team, away_team, league, market, prob, win):
+    """Store result in team memory for calibration."""
+    try:
+        with get_conn() as conn:
+            conn.execute("""
+                INSERT INTO team_memory
+                (team_name, opponent, league, market, predicted_prob, actual_win, logged_at)
+                VALUES (?,?,?,?,?,?,?)
+            """, (home_team, away_team, league, market, prob, win,
+                  datetime.now(timezone.utc).isoformat()))
+            # Update market calibration
+            row = conn.execute(
+                "SELECT total, wins, avg_prob FROM market_calibration WHERE market=?",
+                (market,)).fetchone()
+            if row:
+                new_total = row["total"] + 1
+                new_wins  = row["wins"] + win
+                new_avg   = (row["avg_prob"] * row["total"] + prob) / new_total
+                new_hr    = round(new_wins / new_total * 100, 2)
+                new_cf    = round(new_hr / max(new_avg, 1), 3)
+                conn.execute("""
+                    UPDATE market_calibration
+                    SET total=?, wins=?, avg_prob=?, hit_rate=?,
+                        calibration_factor=?, last_updated=?
+                    WHERE market=?
+                """, (new_total, new_wins, new_avg, new_hr, new_cf,
+                      datetime.now(timezone.utc).isoformat(), market))
+            else:
+                hr = 100.0 if win else 0.0
+                conn.execute("""
+                    INSERT INTO market_calibration
+                    (market, total, wins, avg_prob, hit_rate, calibration_factor, last_updated)
+                    VALUES (?,1,?,?,?,1.0,?)
+                """, (market, win, prob, hr,
+                      datetime.now(timezone.utc).isoformat()))
+    except Exception as e:
+        print(f"[DB] update_team_memory: {e}")
+
+def get_market_calibration():
+    """
+    Returns calibration data for markets with 20+ samples.
+    Used by match_predictor to auto-adjust conviction scores.
+    """
+    try:
+        with get_conn() as conn:
+            rows = conn.execute("""
+                SELECT market, total, wins, avg_prob, hit_rate, calibration_factor
+                FROM market_calibration WHERE total >= 20
+                ORDER BY total DESC
+            """).fetchall()
+        return {r["market"]: dict(r) for r in rows}
+    except:
+        return {}
+
+def get_team_stats_memory(team_name, market=None, min_samples=5):
+    """Get historical accuracy for a specific team from memory."""
+    try:
+        with get_conn() as conn:
+            if market:
+                row = conn.execute("""
+                    SELECT COUNT(*) as total, SUM(actual_win) as wins,
+                           AVG(predicted_prob) as avg_prob
+                    FROM team_memory WHERE team_name=? AND market=?
+                """, (team_name, market)).fetchone()
+            else:
+                row = conn.execute("""
+                    SELECT COUNT(*) as total, SUM(actual_win) as wins,
+                           AVG(predicted_prob) as avg_prob
+                    FROM team_memory WHERE team_name=?
+                """, (team_name,)).fetchone()
+            if row and row["total"] and row["total"] >= min_samples:
+                total = row["total"]; wins = row["wins"] or 0
+                return {
+                    "total":    total,
+                    "wins":     wins,
+                    "hit_rate": round(wins/total*100, 1),
+                    "avg_prob": round(row["avg_prob"] or 50, 1),
+                }
+    except Exception as e:
+        print(f"[DB] get_team_stats_memory: {e}")
+    return None
 
 def cache_set(table, key, json_str):
     with get_conn() as conn:
