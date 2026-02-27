@@ -10,19 +10,19 @@ BSD_TOKEN  = “631a48f45a20b3352ea3863f8aa23baf610710e2”
 BASE_URL   = “https://sports.bzzoiro.com/api”
 WAT_OFFSET = 1
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
 # LEAGUE REGISTRY
 
-# Maps Bzzoiro league IDs → display metadata.
+# Maps Bzzoiro league IDs -> display metadata.
 
 # The KEY issue: we can’t hardcode IDs without knowing what Bzzoiro returns.
 
 # Solution: auto-discover leagues from live data, merge with known metadata.
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
-# Known metadata by league name (lowercase) — name-based matching is reliable
+# Known metadata by league name (lowercase) – name-based matching is reliable
 
 # even when IDs differ across API providers
 
@@ -110,7 +110,7 @@ return {“country”: “World”, “icon”: “🌐”, “tier”: 3}
 def _build_league_registry(all_matches: list) -> dict:
 “””
 Build/update the league registry from real API data.
-This is the fix for the mismatch — we trust the API’s own league IDs
+This is the fix for the mismatch – we trust the API’s own league IDs
 and enrich them with our metadata by name.
 “””
 global _LEAGUE_REGISTRY
@@ -134,7 +134,7 @@ seen[l_id] = {
 _LEAGUE_REGISTRY = seen
 return seen
 
-# ── API HELPERS ───────────────────────────────────────────────────────────────
+# – API HELPERS —————————————————————
 
 def api_get(path, params=None):
 headers = {“Authorization”: f”Token {BSD_TOKEN}”}
@@ -143,7 +143,7 @@ r = requests.get(f”{BASE_URL}{path}”, headers=headers, params=params, timeou
 r.raise_for_status()
 return r.json()
 except Exception as e:
-print(f”[API] {path} → {e}”)
+print(f”[API] {path} -> {e}”)
 return {}
 
 def fetch_all_predictions():
@@ -188,7 +188,7 @@ return all_matches
 
 def fetch_league_matches(l_id: int) -> list:
 “””
-STRICT league filtering — only matches where event.league.id == l_id.
+STRICT league filtering – only matches where event.league.id == l_id.
 The registry ensures we’re always using the API’s own league IDs.
 “””
 all_matches = fetch_all_predictions()
@@ -197,7 +197,7 @@ m for m in all_matches
 if m.get(“event”, {}).get(“league”, {}).get(“id”) == l_id
 ]
 
-# ── LIVE ODDS (API Football) ──────────────────────────────────────────────────
+# – LIVE ODDS (API Football) –––––––––––––––––––––––––
 
 # API Football league IDs for odds endpoint
 
@@ -211,8 +211,8 @@ _AFL_ODDS_LEAGUE_MAP = {
 def get_live_odds(home_team: str, away_team: str, league_name: str) -> dict:
 “””
 Fetch live bookmaker odds from API Football.
-Returns dict of market → bookmaker_odds for Bet365 / best available.
-Falls back gracefully — never crashes.
+Returns dict of market -> bookmaker_odds for Bet365 / best available.
+Falls back gracefully – never crashes.
 “””
 api_key = external_data.APIFOOTBALL_KEY
 if not api_key:
@@ -279,18 +279,18 @@ except Exception as e:
     return {}
 ```
 
-# ── RELIABILITY ENGINE ────────────────────────────────────────────────────────
+# – RELIABILITY ENGINE ––––––––––––––––––––––––––––
 
 def compute_reliability(api_data: dict, enriched: dict, res: dict) -> dict:
 “””
-Reliability Engine — evaluates match conditions beyond probability.
+Reliability Engine – evaluates match conditions beyond probability.
 
 ```
 Returns:
-    score     : 0–100 reliability score
+    score     : 0-100 reliability score
     tag       : ✅ RELIABLE / ⚠️ AVOID / 🔄 VERSATILE / SOLID TIP / MONITOR
     reason    : 1-line explanation
-    suppress  : bool — if True, mark tip as questionable even if prob is high
+    suppress  : bool -- if True, mark tip as questionable even if prob is high
 """
 event    = api_data.get("event", {})
 h_name   = event.get("home_team", "")
@@ -312,7 +312,7 @@ score  = 60  # baseline
 notes  = []
 flags  = []
 
-# ── Positive signals (raise score) ──
+# -- Positive signals (raise score) --
 if fav >= 65:
     score += 10; notes.append("Clear favourite")
 if signals >= 3:
@@ -331,7 +331,7 @@ if h_stable and (rec.get("tip") in ("HOME WIN","GG","OVER 2.5")):
 if a_stable and rec.get("tip") == "AWAY WIN":
     score += 8; notes.append("Away side in solid form")
 
-# ── Negative signals (reduce score) ──
+# -- Negative signals (reduce score) --
 # Slump detection
 h_slump = list(h_form[-3:]).count("L") >= 3 if len(h_form) >= 3 else False
 a_slump = list(a_form[-3:]).count("L") >= 3 if len(a_form) >= 3 else False
@@ -347,10 +347,10 @@ if key_out >= 3:
 elif key_out >= 1:
     score -= 10; flags.append(f"{key_out} injury concern(s)")
 
-# Volatility — close 3-way market
+# Volatility -- close 3-way market
 spread = max(h_win, draw, a_win) - min(h_win, draw, a_win)
 if spread < 10:
-    score -= 20; flags.append("3-way market very tight — high volatility")
+    score -= 20; flags.append("3-way market very tight -- high volatility")
 elif spread < 15:
     score -= 10; flags.append("Closely contested match")
 
@@ -358,7 +358,7 @@ elif spread < 15:
 lg_lower = lg_name.lower()
 is_cup = any(w in lg_lower for w in ["cup","copa","coupe","pokal","fa cup","league cup","carabao"])
 is_friendly = "friendly" in lg_lower or "international" in lg_lower
-# Derby — same city / rivalry names
+# Derby -- same city / rivalry names
 h_l = h_name.lower(); a_l = a_name.lower()
 is_derby = (
     any(w in h_l and w in a_l for w in ["city","united","fc","milan","madrid","london"]) or
@@ -366,16 +366,16 @@ is_derby = (
 )
 
 if is_friendly:
-    score -= 35; flags.append("International friendly — low predictability")
+    score -= 35; flags.append("International friendly -- low predictability")
 if is_cup:
-    score -= 10; flags.append("Cup match — upsets more common")
+    score -= 10; flags.append("Cup match -- upsets more common")
 if is_derby and not is_cup:
-    score -= 12; flags.append("Derby fixture — form often irrelevant")
+    score -= 12; flags.append("Derby fixture -- form often irrelevant")
 
 # Clamp
 score = max(0, min(100, score))
 
-# ── Determine tag ──
+# -- Determine tag --
 suppress = False
 if is_friendly or (is_derby and score < 50):
     tag = "🔄 VERSATILE"
@@ -392,10 +392,10 @@ elif score >= 65:
     reason = notes[0] if notes else "Good signal agreement"
 elif conv >= 55:
     tag = "SOLID TIP"
-    reason = "Moderate conviction — worth considering"
+    reason = "Moderate conviction -- worth considering"
 else:
     tag = "MONITOR"
-    reason = "Insufficient signal strength — watch closer to kickoff"
+    reason = "Insufficient signal strength -- watch closer to kickoff"
 
 return {
     "score":    score,
@@ -407,7 +407,7 @@ return {
 }
 ```
 
-# ── DATE / TIME ───────────────────────────────────────────────────────────────
+# – DATE / TIME —————————————————————
 
 def parse_dt(raw):
 if not raw:
@@ -454,7 +454,7 @@ if k not in ordered:
 ordered[k] = groups[k]
 return ordered
 
-# ── UI HELPERS ────────────────────────────────────────────────────────────────
+# – UI HELPERS ––––––––––––––––––––––––––––––––
 
 def _quick_sure(m):
 try:
@@ -466,7 +466,7 @@ cls = {“W”:“dot-w”,“D”:“dot-d”,“L”:“dot-l”}.get(r.upper(
 return f’<span class="dot {cls}">{r.upper()}</span>’
 
 def form_dots(fl):
-if not fl: return ‘<span style="font-size:.6rem;color:var(--t)">—</span>’
+if not fl: return ‘<span style="font-size:.6rem;color:var(--t)">–</span>’
 return ‘<div class="dots">’+’’.join(form_dot(r) for r in list(fl)[-5:])+’</div>’
 
 def prob_bar(label, pct, color=“green”):
@@ -512,7 +512,7 @@ if “UNDER” in tip or tip == “NG”: return “var(–cy)”
 if “DRAW” in tip: return “var(–w)”
 return “var(–t2)”
 
-# ── CSS ───────────────────────────────────────────────────────────────────────
+# – CSS ———————————————————————–
 
 CSS = “””
 :root{
@@ -742,7 +742,7 @@ nav{position:sticky;top:0;z-index:200;background:rgba(4,7,12,.92);backdrop-filte
 .d1{animation-delay:.04s}.d2{animation-delay:.08s}.d3{animation-delay:.13s}.d4{animation-delay:.18s}
 “””
 
-# ── LAYOUT ────────────────────────────────────────────────────────────────────
+# – LAYOUT ––––––––––––––––––––––––––––––––––
 
 LAYOUT = “””<!DOCTYPE html>
 
@@ -781,7 +781,7 @@ const obs=new IntersectionObserver(entries=>{
 document.querySelectorAll('.pfill').forEach(el=>{
   el.dataset.w=parseFloat(el.style.width)||0;el.style.width='0%';obs.observe(el);
 });
-// Quota monitor — shows remaining API calls in nav
+// Quota monitor -- shows remaining API calls in nav
 fetch('/api/quota').then(r=>r.json()).then(d=>{
   const b=document.getElementById('quota-badge');
   if(b&&d.remaining!==undefined){
@@ -819,7 +819,7 @@ if(si){
 </body>
 </html>"""
 
-# ── HOME ─────────────────────────────────────────────────────────────────────
+# – HOME ———————————————————————
 
 def _fast_reliability(api_data: dict, res: dict) -> dict:
 “””
@@ -894,11 +894,11 @@ c  = f'''<div class="up" style="padding:22px 0 14px">
 
 c += '''<div class="search-wrap up d1">
   <span class="s-icon">🔍</span>
-  <input id="ls" class="search-input" type="text" placeholder="Search league or country…">
+  <input id="ls" class="search-input" type="text" placeholder="Search league or country...">
   <span class="s-clear">✕</span>
 </div>'''
 
-# Build tier lists — with-matches leagues first, then empty ones
+# Build tier lists -- with-matches leagues first, then empty ones
 # Deduplicated with set tracking to avoid any lid appearing twice
 all_ids = sorted(registry.keys(),
     key=lambda lid: (registry[lid].get("tier",3), -counts.get(lid,0)))
@@ -911,7 +911,7 @@ for lid in all_ids:
         t = registry[lid].get("tier", 3)
         tiers[t].append(lid)
         seen_lids.add(lid)
-# Pass 2: empty leagues (only show if total matches > 20 — registry is rich)
+# Pass 2: empty leagues (only show if total matches > 20 -- registry is rich)
 if len(seen_lids) > 0:
     for lid in all_ids:
         if lid not in seen_lids:
@@ -943,7 +943,7 @@ for tier, lids in sorted(tiers.items()):
 return render_template_string(LAYOUT, content=c, page="home")
 ```
 
-# ── LEAGUE PAGE ───────────────────────────────────────────────────────────────
+# – LEAGUE PAGE —————————————————————
 
 @app.route(”/league/<int:l_id>”)
 def league_page(l_id):
@@ -951,7 +951,7 @@ def league_page(l_id):
 _ = fetch_all_predictions()  # ensure registry built
 meta   = _LEAGUE_REGISTRY.get(l_id, {“name”:“League”,“icon”:“🌐”,“country”:””,“tier”:2})
 matches= fetch_league_matches(l_id)
-back   = ‘<a href="/" class="back">← Leagues</a>’
+back   = ‘<a href="/" class="back"><- Leagues</a>’
 
 ```
 if not matches:
@@ -978,7 +978,7 @@ for dt, m in groups.get(active, []):
     raw  = e.get("event_timestamp") or e.get("event_date","")
     dt   = parse_dt(raw)
     res  = match_predictor.analyze_match(m, l_id)
-    tip  = res["recommended"]["tip"] if res else "—"
+    tip  = res["recommended"]["tip"] if res else "--"
     prob = res["recommended"]["prob"] if res else 0
     tc   = tip_color(tip)
     status  = e.get("status","")
@@ -1010,20 +1010,20 @@ c  = back
 c += f'''<div class="up" style="margin-bottom:18px">
   <p class="eyebrow">{meta["icon"]} {meta["country"]}</p>
   <h2 class="title" style="font-size:1.75rem;margin-top:4px">{meta["name"]}</h2>
-  <p style="font-size:.6rem;color:var(--t);margin-top:5px">{len(matches)} fixtures · {len(date_keys)} matchday(s)</p>
+  <p style="font-size:.6rem;color:var(--t);margin-top:5px">{len(matches)} fixtures * {len(date_keys)} matchday(s)</p>
 </div>'''
 c += tabs + rows
 return render_template_string(LAYOUT, content=c, page="league")
 ```
 
-# ── MATCH PAGE ────────────────────────────────────────────────────────────────
+# – MATCH PAGE ––––––––––––––––––––––––––––––––
 
 @app.route(”/match/<int:match_id>”)
 def match_display(match_id):
 data = api_get(f”/predictions/{match_id}/”)
 if not data:
 return render_template_string(LAYOUT,
-content=’<a href="/" class="back">← Home</a><div class="empty">Match unavailable</div>’,
+content=’<a href="/" class="back"><- Home</a><div class="empty">Match unavailable</div>’,
 page=“match”)
 
 ```
@@ -1044,7 +1044,7 @@ res       = match_predictor.analyze_match(data, l_id, enriched)
 
 if not res:
     return render_template_string(LAYOUT,
-        content=f'<a href="/league/{l_id}" class="back">← {meta["name"]}</a><div class="empty">Analysis unavailable</div>',
+        content=f'<a href="/league/{l_id}" class="back"><- {meta["name"]}</a><div class="empty">Analysis unavailable</div>',
         page="match")
 
 # Reliability engine
@@ -1076,7 +1076,7 @@ _try_settle(data, match_id)
 rec        = res["recommended"]
 safe       = res["safest"]
 risky_list = res["risky"]
-risky_main = risky_list[0] if risky_list else {"tip":"—","prob":0,"odds":0}
+risky_main = risky_list[0] if risky_list else {"tip":"--","prob":0,"odds":0}
 ox         = res["1x2"]; mkts = res["markets"]
 mom        = res["momentum"]
 h_form_d   = enriched.get("home_form") or res["form"]["home"]
@@ -1103,9 +1103,9 @@ ma_w     = round(mom["away"]/total_mom*100)
 agree_html=''.join([f'<span class="sig-dot {"sig-on" if i<rec["agree"] else "sig-off"}"></span>' for i in range(3)])
 suppressed = reliability.get("suppress", False)
 
-c = f'<a href="/league/{l_id}" class="back">← {meta["name"]}</a>'
+c = f'<a href="/league/{l_id}" class="back"><- {meta["name"]}</a>'
 
-# ── HEADER ──
+# -- HEADER --
 c += f'''<div class="up" style="margin-bottom:14px">
   <div style="display:flex;justify-content:space-between;align-items:flex-start">
     <div style="flex:1;min-width:0">
@@ -1116,7 +1116,7 @@ c += f'''<div class="up" style="margin-bottom:14px">
         <div class="team-name away">{a}</div>
       </div>
       <p style="font-size:.58rem;color:var(--t);letter-spacing:1px;margin-top:4px">
-        {meta["icon"]} {meta["name"]} · {dt.strftime("%-d %b %Y")} · {dt.strftime("%H:%M")} WAT
+        {meta["icon"]} {meta["name"]} * {dt.strftime("%-d %b %Y")} * {dt.strftime("%H:%M")} WAT
       </p>
     </div>
     <div class="cring" style="margin-left:10px;margin-top:6px">
@@ -1131,7 +1131,7 @@ c += f'''<div class="up" style="margin-bottom:14px">
   </div>
 </div>'''
 
-# ── RELIABILITY BOX ──
+# -- RELIABILITY BOX --
 rel_cls = ("reliable" if "RELIABLE" in reliability["tag"] or "SURE" in reliability["tag"]
            else "avoid" if "AVOID" in reliability["tag"]
            else "versatile" if "VERSATILE" in reliability["tag"]
@@ -1144,12 +1144,12 @@ c += f'<span style="font-size:.7rem;font-weight:800;color:var(--wh)">{reliabilit
 c += '</div>'
 c += f'<p style="font-size:.68rem;color:var(--t2);line-height:1.5">{reliability["reason"]}</p>'
 if reliability["flags"]:
-    c += f'<p style="font-size:.62rem;color:var(--r);margin-top:5px">⚠ {" · ".join(reliability["flags"][:2])}</p>'
+    c += f'<p style="font-size:.62rem;color:var(--r);margin-top:5px">⚠ {" * ".join(reliability["flags"][:2])}</p>'
 c += f'''<div style="margin-top:8px">
   <div class="ptrack"><div class="pfill" style="width:{reliability["score"]}%;background:{"var(--g)" if reliability["score"]>=65 else "var(--w)" if reliability["score"]>=45 else "var(--r)"}"></div></div>
 </div></div>'''
 
-# ── INJURIES ──
+# -- INJURIES --
 if h_inj or a_inj:
     c += '<div class="card up d1" style="border-color:rgba(244,67,54,.2)">'
     c += '<p class="sep" style="padding-top:0;margin-top:0;color:var(--r)">⚠ Injuries & Suspensions</p>'
@@ -1161,11 +1161,11 @@ if h_inj or a_inj:
             c += f'<div class="inj-row"><div class="{dc}"></div><span style="color:var(--wh);font-weight:600">{inj["name"]}</span><span style="margin-left:auto;font-size:.58rem;color:var(--t)">{inj["type"]}</span></div>'
     c += '</div>'
 
-# ── RECOMMENDED TIP ──
+# -- RECOMMENDED TIP --
 sup_cls = " suppressed" if suppressed else ""
 pct_cls = " suppressed" if suppressed else ""
 if suppressed:
-    supp_warning = '<p style="font-size:.66rem;color:var(--r);margin-top:6px;padding:7px 10px;background:rgba(244,67,54,.07);border-radius:8px;border:1px solid rgba(244,67,54,.15)">⚠️ Reliability engine flags this tip — bet with caution</p>'
+    supp_warning = '<p style="font-size:.66rem;color:var(--r);margin-top:6px;padding:7px 10px;background:rgba(244,67,54,.07);border-radius:8px;border:1px solid rgba(244,67,54,.15)">⚠️ Reliability engine flags this tip -- bet with caution</p>'
 else:
     supp_warning = ""
 
@@ -1196,7 +1196,7 @@ c += f'''<div class="rec-box{sup_cls} up d2">
   {supp_warning}
 </div>'''
 
-# ── SAFE + RISKY ──
+# -- SAFE + RISKY --
 safe_odds_str = f'<p style="font-size:.6rem;color:var(--t);margin-top:4px">Fair {safe["odds"]}</p>' if safe.get("odds") else ""
 c += f'''<div class="g2 up d2">
   <div class="tier-box safe">
@@ -1218,10 +1218,10 @@ if len(risky_list) > 1:
     c += '<div class="expand-toggle"><span>More Combo Markets</span><span class="expand-arrow">▾</span></div>'
     c += '<div class="expand-body">'
     for rk in risky_list[1:]:
-        c += f'<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-top:1px solid var(--bdr)"><span style="font-weight:700;color:var(--wh);font-size:.72rem">{rk["tip"]}</span><span style="color:var(--w);font-weight:700;font-size:.72rem">{rk["prob"]}% · ~{rk["odds"]}</span></div>'
+        c += f'<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-top:1px solid var(--bdr)"><span style="font-weight:700;color:var(--wh);font-size:.72rem">{rk["tip"]}</span><span style="color:var(--w);font-weight:700;font-size:.72rem">{rk["prob"]}% * ~{rk["odds"]}</span></div>'
     c += '<div style="height:4px"></div></div></div>'
 
-# ── xG + Squad Intel ──
+# -- xG + Squad Intel --
 si = res.get("squad_intel", {})
 h_sq_score = si.get("home_score", 0)
 a_sq_score = si.get("away_score", 0)
@@ -1241,16 +1241,16 @@ c += f'''<div class="g2 up d2">
   <div class="sbox"><p class="sval b">{res["xg_a"]}</p><p class="slbl">xG {a.split()[0]}</p></div>
 </div>'''
 
-# Squad Strength — only shown when player data available
+# Squad Strength -- only shown when player data available
 if has_squad:
     h_sq_c = "var(--g)" if h_sq_score>=65 else "var(--w)" if h_sq_score>=45 else "var(--r)"
     a_sq_c = "var(--g)" if a_sq_score>=65 else "var(--w)" if a_sq_score>=45 else "var(--r)"
-    h_pen_html = f'<span style="font-size:.55rem;color:var(--r)"> −{round((1-h_penalty)*100)}% xG</span>' if h_penalty < 0.95 else ""
-    a_pen_html = f'<span style="font-size:.55rem;color:var(--r)"> −{round((1-a_penalty)*100)}% xG</span>' if a_penalty < 0.95 else ""
+    h_pen_html = f'<span style="font-size:.55rem;color:var(--r)"> -{round((1-h_penalty)*100)}% xG</span>' if h_penalty < 0.95 else ""
+    a_pen_html = f'<span style="font-size:.55rem;color:var(--r)"> -{round((1-a_penalty)*100)}% xG</span>' if a_penalty < 0.95 else ""
     h_miss_html = f'<span style="font-size:.58rem;color:var(--r)">⚠ {h_missing} key out</span>' if h_missing > 0 else ""
     a_miss_html = f'<span style="font-size:.58rem;color:var(--r)">⚠ {a_missing} key out</span>' if a_missing > 0 else ""
 
-    # Top players from squad — safe None handling
+    # Top players from squad -- safe None handling
     h_sq_data = enriched.get("home_squad") if enriched else None
     a_sq_data = enriched.get("away_squad") if enriched else None
     h_top = (h_sq_data.get("top_players", []) if isinstance(h_sq_data, dict) else [])
@@ -1265,18 +1265,18 @@ if has_squad:
           <p style="font-size:.64rem;font-weight:700;color:var(--wh);margin-bottom:3px">{h.split()[0]}{h_pen_html}</p>
           <div class="ptrack" style="margin-bottom:4px"><div class="pfill" style="width:{h_sq_score}%;background:{h_sq_c}"></div></div>
           <p style="font-size:.6rem;color:{h_sq_c};font-weight:700">{h_sq_score:.0f}/100 {h_miss_html}</p>
-          {f'<p style="font-size:.6rem;color:var(--t);margin-top:3px">★ {h_tp["name"]} {h_tp["rating"]:.1f} · {h_tp["goals"]}G</p>' if h_tp else ""}
+          {f'<p style="font-size:.6rem;color:var(--t);margin-top:3px">★ {h_tp["name"]} {h_tp["rating"]:.1f} * {h_tp["goals"]}G</p>' if h_tp else ""}
         </div>
         <div>
           <p style="font-size:.64rem;font-weight:700;color:var(--wh);margin-bottom:3px;text-align:right">{a.split()[0]}{a_pen_html}</p>
           <div class="ptrack" style="margin-bottom:4px"><div class="pfill" style="width:{a_sq_score}%;background:{a_sq_c}"></div></div>
           <p style="font-size:.6rem;color:{a_sq_c};font-weight:700;text-align:right">{a_sq_score:.0f}/100 {a_miss_html}</p>
-          {f'<p style="font-size:.6rem;color:var(--t);margin-top:3px;text-align:right">★ {a_tp["name"]} {a_tp["rating"]:.1f} · {a_tp["goals"]}G</p>' if a_tp else ""}
+          {f'<p style="font-size:.6rem;color:var(--t);margin-top:3px;text-align:right">★ {a_tp["name"]} {a_tp["rating"]:.1f} * {a_tp["goals"]}G</p>' if a_tp else ""}
         </div>
       </div>
     </div>'''  
 
-# ── ANALYST VIEW ──
+# -- ANALYST VIEW --
 has_narr = any(narrative.get(k) for k in ["form","h2h","goals","injuries","morale","squad","top_player"])
 if has_narr:
     c += '<div class="card up d3"><p class="sep" style="padding-top:0;margin-top:0">📋 Analyst View</p>'
@@ -1288,12 +1288,12 @@ if has_narr:
     ]:
         val = narrative.get(key)
         if val:
-            c += f'<div class="analyst-item"><strong>{label} · </strong>{val}</div>'
+            c += f'<div class="analyst-item"><strong>{label} * </strong>{val}</div>'
     c += '</div>'
 
-# ── 1X2 + Goal markets (expandable) ──
+# -- 1X2 + Goal markets (expandable) --
 c += f'''<div class="card up d3">
-  <div class="expand-toggle"><span>1 × 2 Probabilities</span><span class="expand-arrow open">▾</span></div>
+  <div class="expand-toggle"><span>1 x 2 Probabilities</span><span class="expand-arrow open">▾</span></div>
   <div class="expand-body open">
     {prob_bar("Home Win", ox["home"])}
     {prob_bar("Draw", ox["draw"], "blue")}
@@ -1303,8 +1303,8 @@ c += f'''<div class="card up d3">
 <div class="card up d3">
   <div class="expand-toggle"><span>Goal Markets</span><span class="expand-arrow open">▾</span></div>
   <div class="expand-body open">
-    {prob_bar("GG — Both Score", mkts["gg"])}
-    {prob_bar("NG — Clean Sheet", mkts["ng"], "orange")}
+    {prob_bar("GG -- Both Score", mkts["gg"])}
+    {prob_bar("NG -- Clean Sheet", mkts["ng"], "orange")}
     {prob_bar("Over 1.5", mkts["over_15"])}
     {prob_bar("Over 2.5", mkts["over_25"])}
     {prob_bar("Over 3.5", mkts["over_35"])}
@@ -1312,12 +1312,12 @@ c += f'''<div class="card up d3">
   </div>
 </div>'''
 
-# ── H2H ──
+# -- H2H --
 if h2h_sum and h2h_sum["total"] >= 2:
     n=h2h_sum["total"]; hw=h2h_sum["home_wins"]; dr=h2h_sum["draws"]; aw=h2h_sum["away_wins"]
     hw_w=round(hw/n*100); dr_w=round(dr/n*100); aw_w=round(aw/n*100)
     c += f'<div class="card up d3">'
-    c += f'<div class="expand-toggle"><span>Head to Head · Last {n}</span><span class="expand-arrow open">▾</span></div>'
+    c += f'<div class="expand-toggle"><span>Head to Head * Last {n}</span><span class="expand-arrow open">▾</span></div>'
     c += '<div class="expand-body open">'
     c += f'''<div class="g3" style="margin-bottom:10px">
       <div class="sbox"><p class="sval g" style="font-size:1.3rem">{hw}</p><p class="slbl">{h.split()[0]}</p></div>
@@ -1336,10 +1336,10 @@ if h2h_sum and h2h_sum["total"] >= 2:
     </div>'''
     for mh in h2h_sum.get("matches",[])[:6]:
         hg=mh.get("home_goals","?"); ag=mh.get("away_goals","?")
-        c += f'<div class="h2h-row"><span class="h2h-date">{mh.get("date","")[:7]}</span><span class="h2h-teams">{mh.get("home","?")} vs {mh.get("away","?")}</span><span class="h2h-score">{hg}–{ag}</span></div>'
+        c += f'<div class="h2h-row"><span class="h2h-date">{mh.get("date","")[:7]}</span><span class="h2h-teams">{mh.get("home","?")} vs {mh.get("away","?")}</span><span class="h2h-score">{hg}-{ag}</span></div>'
     c += '</div></div>'
 
-# ── Last 5 matches per team ──
+# -- Last 5 matches per team --
 def last_blk(title, matches, team_name):
     if not matches: return ""
     b = f'<div class="card up d3"><div class="expand-toggle"><span>{title}</span><span class="expand-arrow">▾</span></div><div class="expand-body">'
@@ -1353,17 +1353,17 @@ def last_blk(title, matches, team_name):
           <div class="lm-res {rc2}">{r}</div>
           <div style="flex:1">
             <div style="font-size:.72rem;font-weight:700;color:var(--wh)">{"vs" if is_h else "@"} {opp}</div>
-            <div style="font-size:.58rem;color:var(--t)">{m.get("league","")} · {m.get("date","")}</div>
+            <div style="font-size:.58rem;color:var(--t)">{m.get("league","")} * {m.get("date","")}</div>
           </div>
-          <span style="font-size:.78rem;font-weight:800;color:var(--wh)">{hg}–{ag}</span>
+          <span style="font-size:.78rem;font-weight:800;color:var(--wh)">{hg}-{ag}</span>
         </div>'''
     b += '</div></div>'
     return b
 
-c += last_blk(f"{h} — Last 5", h_last, h)
-c += last_blk(f"{a} — Last 5", a_last, a)
+c += last_blk(f"{h} -- Last 5", h_last, h)
+c += last_blk(f"{a} -- Last 5", a_last, a)
 
-# ── Season stats ──
+# -- Season stats --
 if h_stats or a_stats:
     c += '<div class="card up d4"><div class="expand-toggle"><span>Season Stats</span><span class="expand-arrow">▾</span></div><div class="expand-body">'
     for tn, st in [(h, h_stats),(a, a_stats)]:
@@ -1378,7 +1378,7 @@ if h_stats or a_stats:
             c += f'<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--bdr);font-size:.7rem"><span>{lbl}</span><span style="color:var(--wh);font-weight:700">{val}</span></div>'
     c += '</div></div>'
 
-# ── Form + Momentum ──
+# -- Form + Momentum --
 c += f'''<div class="card up d4">
   <p class="sep" style="padding-top:0;margin-top:0">Form & Momentum</p>
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
@@ -1404,12 +1404,12 @@ c += f'''<div class="card up d4">
 return render_template_string(LAYOUT, content=c, page="match")
 ```
 
-# ── ACCA ──────────────────────────────────────────────────────────────────────
+# – ACCA –––––––––––––––––––––––––––––––––––
 
 @app.route(”/acca”)
 def acca():
 all_matches = fetch_all_predictions()
-# ACCA only uses TODAY + TOMORROW fixtures — never future dates or stale matches
+# ACCA only uses TODAY + TOMORROW fixtures – never future dates or stale matches
 today_wat    = now_wat().date()
 tomorrow_wat = today_wat + timedelta(days=1)
 acca_matches = []
@@ -1433,7 +1433,7 @@ for p in picks:
     e    = p["match"].get("event",{})
     h, a = e.get("home_team","?"), e.get("away_team","?")
     res  = p["result"]; mid = p["match"].get("id",0)
-    meta = _LEAGUE_REGISTRY.get(p["league_id"], {"icon":"🌐","name":"—"})
+    meta = _LEAGUE_REGISTRY.get(p["league_id"], {"icon":"🌐","name":"--"})
     rec  = res["recommended"]
     edge = rec.get("edge")
     tc   = tip_color(rec["tip"])
@@ -1447,10 +1447,10 @@ for p in picks:
         <p style="font-size:.8rem;font-weight:700;color:var(--wh)">{h} vs {a}</p>
         <p style="font-size:.62rem;margin-top:2px">
           <span style="color:{tc};font-weight:700">{rec["tip"]}</span>
-          <span style="color:var(--t)"> · {rec["prob"]}%{"  +"+str(edge)+"% edge" if edge and edge>0 else ""}</span>
+          <span style="color:var(--t)"> * {rec["prob"]}%{"  +"+str(edge)+"% edge" if edge and edge>0 else ""}</span>
           {tag_html}
         </p>
-        <p style="font-size:.6rem;color:var(--t);margin-top:2px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{rec["reason"][:68]}{"…" if len(rec["reason"])>68 else ""}</p>
+        <p style="font-size:.6rem;color:var(--t);margin-top:2px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{rec["reason"][:68]}{"..." if len(rec["reason"])>68 else ""}</p>
       </div>
       <div style="text-align:right;flex-shrink:0;margin-left:10px">
         <p style="font-size:1.35rem;font-weight:900;color:var(--g)">{rec["odds"]}</p>
@@ -1462,13 +1462,13 @@ c += '</div>'
 c += f'''<div class="tracker-hero up d2" style="text-align:center;margin-top:10px">
   <p class="eyebrow">Combined Fair Odds</p>
   <p class="big-stat" style="color:var(--g);margin:8px 0">{combined}</p>
-  <p style="font-size:.58rem;color:var(--t);letter-spacing:1px">{len(picks)}-FOLD ACCUMULATOR · Min odds 1.25 per leg</p>
+  <p style="font-size:.58rem;color:var(--t);letter-spacing:1px">{len(picks)}-FOLD ACCUMULATOR * Min odds 1.25 per leg</p>
 </div>
 <p style="font-size:.56rem;color:var(--t);text-align:center;padding:14px;letter-spacing:.8px">Fair model odds shown. Verify with your bookmaker. Bet responsibly.</p>'''
 return render_template_string(LAYOUT, content=c, page="acca")
 ```
 
-# ── TRACKER ───────────────────────────────────────────────────────────────────
+# – TRACKER —————————————————————––
 
 @app.route(”/tracker”)
 def tracker():
@@ -1484,7 +1484,7 @@ roi_c  = “var(–g)” if roi>=0 else “var(–r)”
 ```
 c = '<div style="padding:22px 0 14px" class="up"><p class="eyebrow">Model Performance</p><h1 class="title" style="margin-top:5px">TRACKER</h1></div>'
 
-# ── Empty state — shown when no real predictions logged yet ──
+# -- Empty state -- shown when no real predictions logged yet --
 if total == 0:
     c += '''<div style="background:var(--s);border:1px solid var(--bdr);border-radius:18px;padding:28px 20px;text-align:center;margin-top:8px">
       <div style="font-size:2rem;margin-bottom:12px">📊</div>
@@ -1495,12 +1495,12 @@ if total == 0:
         Once that match finishes, the result settles here with a WIN or LOSS.
       </p>
       <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--bdr)">
-        <a href="/" style="display:inline-flex;align-items:center;gap:6px;font-size:.65rem;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--g);padding:10px 20px;border:1px solid rgba(0,230,118,.25);border-radius:50px">Browse Leagues →</a>
+        <a href="/" style="display:inline-flex;align-items:center;gap:6px;font-size:.65rem;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--g);padding:10px 20px;border:1px solid rgba(0,230,118,.25);border-radius:50px">Browse Leagues -></a>
       </div>
     </div>'''
     return render_template_string(LAYOUT, content=c, page="tracker")
 
-# ── Hero stats ──
+# -- Hero stats --
 c += f'''<div class="tracker-hero up d1">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
     <div>
@@ -1533,7 +1533,7 @@ c += f'''<div class="tracker-hero up d1">
   </div>
 </div>'''
 
-# ── Streak ──
+# -- Streak --
 if streak["count"] > 0:
     sc   = "var(--g)" if streak["type"]=="WIN" else "var(--r)"
     sico = "🔥" if streak["type"]=="WIN" else "❄️"
@@ -1542,7 +1542,7 @@ if streak["count"] > 0:
       <p style="font-size:1.6rem;font-weight:900;color:{sc};line-height:1">{streak["count"]} {streak["type"]}{"S" if streak["count"]>1 else ""} in a row</p>
     </div>'''
 
-# ── Last 10 visual bar chart ──
+# -- Last 10 visual bar chart --
 last10 = stats["recent"][:10]
 if last10:
     c += '<div class="card up d2"><p class="sep" style="padding-top:0;margin-top:0">Last 10 Results</p>'
@@ -1553,10 +1553,10 @@ if last10:
         c += f'<div style="flex:1;background:{col};border-radius:5px;padding:7px 2px;text-align:center;font-size:.58rem;font-weight:700;color:#000">{icon}</div>'
     c += '</div>'
     w10 = sum(1 for r in last10 if r["result"]=="WIN")
-    c += f'<p style="font-size:.65rem;color:var(--t2);text-align:center">{w10}/10 in last 10 · <span style="color:{"var(--g)" if w10>=6 else "var(--w)" if w10>=5 else "var(--r)"}">{"Strong form 🔥" if w10>=7 else "Good form" if w10>=6 else "Average form" if w10>=5 else "Struggling ❄️"}</span></p>'
+    c += f'<p style="font-size:.65rem;color:var(--t2);text-align:center">{w10}/10 in last 10 * <span style="color:{"var(--g)" if w10>=6 else "var(--w)" if w10>=5 else "var(--r)"}">{"Strong form 🔥" if w10>=7 else "Good form" if w10>=6 else "Average form" if w10>=5 else "Struggling ❄️"}</span></p>'
     c += '</div>'
 
-# ── By market ──
+# -- By market --
 if stats["by_market"]:
     c += '<div class="card up d2"><p class="sep" style="padding-top:0;margin-top:0">Performance by Market</p>'
     for row in stats["by_market"]:
@@ -1577,7 +1577,7 @@ if stats["by_market"]:
         </div>'''
     c += '</div>'
 
-# ── By league ──
+# -- By league --
 if stats["by_league"]:
     c += '<div class="card up d3"><p class="sep" style="padding-top:0;margin-top:0">Performance by League</p>'
     for row in stats["by_league"]:
@@ -1587,19 +1587,19 @@ if stats["by_league"]:
         c += f'<div class="perf-row"><div><p style="font-weight:700;color:var(--wh);font-size:.72rem">{lg_meta["icon"]} {row["league_name"]}</p><p style="font-size:.6rem;color:var(--t)">{row["total"]} tips settled</p></div><p style="font-size:1.1rem;font-weight:900;color:{lhrc}">{lhr}%</p></div>'
     c += '</div>'
 
-# ── Recent results full list ──
+# -- Recent results full list --
 if stats["recent"]:
     c += '<div class="card up d3"><p class="sep" style="padding-top:0;margin-top:0">Recent Results</p>'
     for row in stats["recent"]:
         hs  = row.get("actual_home_score"); as_ = row.get("actual_away_score")
-        sc  = f"{hs}–{as_}" if hs is not None else "—"
+        sc  = f"{hs}-{as_}" if hs is not None else "--"
         res_col = "var(--g)" if row["result"]=="WIN" else "var(--r)"
         dot_col = "var(--g)" if row["result"]=="WIN" else "var(--r)"
         c += f'''<div class="result-row">
           <div class="result-dot" style="background:{dot_col}"></div>
           <div style="flex:1;min-width:0">
             <p style="font-weight:700;color:var(--wh);font-size:.72rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{row["home_team"]} vs {row["away_team"]}</p>
-            <p style="font-size:.6rem;color:var(--t);margin-top:1px">{row["market"]} · {round(row["probability"],1)}% · {row["league_name"]}</p>
+            <p style="font-size:.6rem;color:var(--t);margin-top:1px">{row["market"]} * {round(row["probability"],1)}% * {row["league_name"]}</p>
           </div>
           <div style="text-align:right;flex-shrink:0;margin-left:8px">
             <p style="font-size:.7rem;font-weight:800;color:{res_col}">{row["result"]}</p>
@@ -1608,14 +1608,14 @@ if stats["recent"]:
         </div>'''
     c += '</div>'
 
-# ── Pending tips ──
+# -- Pending tips --
 if stats["pending_rows"]:
     c += '<div class="card up d4"><p class="sep" style="padding-top:0;margin-top:0">⏳ Awaiting Results</p>'
     for row in stats["pending_rows"]:
         c += f'''<div class="pending-row">
           <div style="flex:1;min-width:0">
             <p style="font-weight:700;color:var(--wh);font-size:.72rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{row["home_team"]} vs {row["away_team"]}</p>
-            <p style="font-size:.6rem;color:var(--t)">{row["market"]} · {round(row["probability"],1)}% · {row["league_name"]}</p>
+            <p style="font-size:.6rem;color:var(--t)">{row["market"]} * {round(row["probability"],1)}% * {row["league_name"]}</p>
           </div>
           <div style="text-align:right;flex-shrink:0">
             <p style="font-size:.62rem;font-weight:700;color:var(--gold)">{round(row["fair_odds"],2)} odds</p>
@@ -1627,7 +1627,7 @@ if stats["pending_rows"]:
 return render_template_string(LAYOUT, content=c, page="tracker")
 ```
 
-# ── API ───────────────────────────────────────────────────────────────────────
+# – API ———————————————————————–
 
 @app.route(”/api/counts”)
 def api_counts():
@@ -1644,14 +1644,14 @@ def api_leagues():
 fetch_all_predictions()
 return jsonify(_LEAGUE_REGISTRY)
 
-# ── BATCH JOB + QUOTA MONITOR ─────────────────────────────────────────────────
+# – BATCH JOB + QUOTA MONITOR ———————————————––
 
 @app.route(”/api/batch”)
 def api_batch():
 “””
 Pre-fetch squad stats for all teams playing today.
 Call this once per day (e.g. via cron or Render scheduled job at 6am WAT).
-Safe to call multiple times — skips teams already in 24h cache.
+Safe to call multiple times – skips teams already in 24h cache.
 “””
 import external_data as ed
 all_matches = fetch_all_predictions()
@@ -1677,7 +1677,7 @@ def api_quota():
 import external_data as ed
 return jsonify(ed.get_quota_status())
 
-# ── UTILITIES ─────────────────────────────────────────────────────────────────
+# – UTILITIES —————————————————————–
 
 def *try_settle(api_data, match_id):
 try:
