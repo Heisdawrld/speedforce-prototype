@@ -321,7 +321,8 @@ fetch('/api/live-count').then(r=>r.json()).then(d=>{
 
 def render(content, page="home"):
     from flask import render_template_string
-    return render_template_string(LAYOUT, content=content, page=page)
+    from markupsafe import Markup
+    return render_template_string(LAYOUT, content=Markup(content), page=page)
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 def prob_bar(label, val, color="green"):
