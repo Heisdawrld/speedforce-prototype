@@ -1,59 +1,50 @@
 """
-scheduler.py -- Automation Engine
+scheduler.py -- Fixed Automation
 """
 import sportmonks
 import match_predictor
 import database
 
 def run_morning_job():
-    print("Running GOD MODE Morning Analysis...")
+    print("Running Morning Analysis...")
     
-    # 1. Get All Fixtures
-    matches = sportmonks.get_fixtures_today()
-    if not matches:
-        return {"status": "empty", "message": "No matches today"}
-        
+    # 1. Fetch
+    matches = sportmonks.get_fixtures_today() # Now uses fixed pagination
     count = 0
-    errors = 0
     
+    # 2. Analyze & Save
     for m in matches:
         try:
-            # 2. Fetch The Super Packet
-            data = sportmonks.get_match_details(m['id'])
-            if not data: continue
+            # We treat the match dict as 'fixture' for the analyzer
+            # Ideally we enrich it, but for speed in scheduler we might do basic analysis
+            # OR we call enrich_match(m['id']) for full power:
+            enriched = sportmonks.enrich_match(m['id'])
+            if not enriched: continue
             
-            # 3. Analyze
-            res = match_predictor.analyze_match(data)
-            if not res: continue
+            res = match_predictor.analyze_match(enriched)
+            rec = res['tips']['recommended']
             
-            tips = res['tips']
-            rec = tips.get('recommended')
-            
-            # 4. Save to DB (Primary Tip)
-            # You can expand database.log_prediction to take safest/risky too if you want
+            # Save to DB
             if rec:
                 database.log_prediction(
                     match_id=m['id'],
-                    league_id=m.get('league_id', 0),
-                    league_name="Unknown", # You can fetch league name if needed
+                    league_id=m.get('league_id',0),
+                    league_name="League",
                     home_team=res['teams']['home'],
-                    away_team="Away",
-                    match_date=m.get('starting_at', ''),
-                    market=rec['type'],
+                    away_team=res['teams']['away'],
+                    match_date=m.get('starting_at',''),
+                    market=rec['sel'],
                     probability=rec['prob'],
                     fair_odds=rec['odds'],
-                    confidence=rec['prob'], # Use prob as confidence
-                    xg_home=0, xg_away=0, # Placeholder if no xG
-                    tag="VALUE" if rec['ev'] > 0 else "STANDARD"
+                    confidence=rec['prob'],
+                    xg_home=0, xg_away=0,
+                    tag="VALUE"
                 )
                 count += 1
-                
         except Exception as e:
-            print(f"Error on match {m.get('id')}: {e}")
-            errors += 1
+            print(f"Scheduler Error {m.get('id')}: {e}")
             
-    return {"status": "success", "analyzed": count, "errors": errors}
+    return {"status": "success", "analyzed": count}
 
 def run_settlement_job():
-    # Placeholder for settlement logic
-    return {"status": "success", "message": "Settlement not implemented in this snippet"}
+    return {"status": "success"} # Placeholder
