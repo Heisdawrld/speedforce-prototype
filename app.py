@@ -364,129 +364,123 @@ def tip_color(tip):
     if "UNDER" in t or "NG" in t: return "var(--t3)"
     return "var(--wh)"
 
-def _predicted_score(xg_h, xg_a):
-    """Most likely scoreline from Poisson distribution."""
-    import math
-    def pmf(k, l): return (l**k) * math.exp(-l) / math.factorial(k) if l > 0 else (1.0 if k==0 else 0.0)
-    best_prob = 0; best_h = 0; best_a = 0
-    for hg in range(7):
-        for ag in range(7):
-            p = pmf(hg, xg_h) * pmf(ag, xg_a)
-            if p > best_prob:
-                best_prob = p; best_h = hg; best_a = ag
-    return best_h, best_a, round(best_prob * 100, 1)
-
-def _form_str(form):
-    if not form: return "No data"
-    return " ".join(list(form)[-6:])
-
 def _analyst_block(h_name, a_name, xg_h, xg_a, h_form, a_form,
                    h_std, a_std, h2h, tip, prob, hw, dw, aw,
                    o25, btts, h_inj, a_inj):
-    """Rich analyst narrative block — shown below the reason on match page."""
-    sc_h, sc_a, sc_prob = _predicted_score(xg_h, xg_a)
+    """Rich analyst narrative block — fully aligned with the recommended tip."""
     total_xg = round(xg_h + xg_a, 2)
+    h_short = h_name.split()[0]
+    a_short = a_name.split()[0]
 
-    # Predicted score chip
-    score_chip = (
-        '<div style="margin-top:12px;padding:12px;background:rgba(0,255,135,.06);'
-        'border:1px solid rgba(0,255,135,.15);border-radius:10px">'
-        '<div style="font-size:.45rem;font-weight:700;letter-spacing:2px;'
-        'color:var(--t3);text-transform:uppercase;margin-bottom:6px">⚽ Predicted Score</div>'
-        '<div style="display:flex;align-items:center;justify-content:space-between">'
-        '<div style="text-align:center">'
-        '<div style="font-size:.72rem;font-weight:700;color:var(--wh)">' + h_name[:16] + '</div>'
-        '<div style="font-size:2rem;font-weight:900;color:var(--g)">' + str(sc_h) + '</div>'
-        '</div>'
-        '<div style="text-align:center">'
-        '<div style="font-size:.55rem;color:var(--t3)">Most likely</div>'
-        '<div style="font-size:.52rem;color:var(--t2);margin-top:2px">' + str(sc_prob) + '% chance</div>'
-        '</div>'
-        '<div style="text-align:center">'
-        '<div style="font-size:.72rem;font-weight:700;color:var(--wh)">' + a_name[:16] + '</div>'
-        '<div style="font-size:2rem;font-weight:900;color:var(--b)">' + str(sc_a) + '</div>'
-        '</div>'
-        '</div></div>'
-    )
-
-    # Key factors
     factors = []
-    # xG factor
-    if xg_h > xg_a * 1.3:
-        factors.append(f"📊 <b>{h_name.split()[0]}</b> dominating chance creation — {xg_h} xG vs {xg_a} xG")
-    elif xg_a > xg_h * 1.3:
-        factors.append(f"📊 <b>{a_name.split()[0]}</b> creating more chances away — {xg_a} xG vs {xg_h} xG")
-    else:
-        factors.append(f"📊 Balanced chance creation — {xg_h} vs {xg_a} xG, total {total_xg}")
 
-    # Form factor
-    h_fs = sum(3 if r.upper()=="W" else 1 if r.upper()=="D" else 0 for r in (h_form or [])[-5:])
-    a_fs = sum(3 if r.upper()=="W" else 1 if r.upper()=="D" else 0 for r in (a_form or [])[-5:])
-    if h_fs > a_fs + 4:
-        factors.append(f"📈 Home form significantly stronger ({h_fs}/15 pts vs {a_fs}/15)")
-    elif a_fs > h_fs + 4:
-        factors.append(f"📈 Away side in superior form ({a_fs}/15 pts vs {h_fs}/15)")
-    else:
-        factors.append(f"📈 Form fairly even — Home {h_fs}/15 pts, Away {a_fs}/15 pts")
-
-    # Standings
-    if h_std and a_std:
-        if h_std < a_std - 5:
-            factors.append(f"🏆 League position strongly favours home side (#{h_std} vs #{a_std})")
-        elif a_std < h_std - 5:
-            factors.append(f"🏆 Away team superior in the table (#{a_std} vs #{h_std})")
+    # ── xG factor — wording follows the tip direction ──────────────────────────
+    if "HOME" in tip:
+        if xg_h > xg_a:
+            factors.append(f"📊 <b>{h_short}</b> leading in chance creation — {xg_h} xG vs {xg_a} xG favours the home side")
         else:
-            factors.append(f"🏆 Closely matched table positions — #{h_std} vs #{a_std}")
+            factors.append(f"📊 xG close ({xg_h} vs {xg_a}) but home advantage and other signals tilt towards {h_short}")
+    elif "AWAY" in tip:
+        if xg_a > xg_h:
+            factors.append(f"📊 <b>{a_short}</b> generating more chances — {xg_a} xG away vs {xg_h} xG for hosts")
+        else:
+            factors.append(f"📊 xG narrow ({xg_h} vs {xg_a}) but form and position back {a_short} despite home disadvantage")
+    elif "OVER 2.5" in tip or "OVER 3.5" in tip:
+        factors.append(f"📊 High combined xG of {total_xg} — both teams generating real chances, goals expected")
+    elif "UNDER 2.5" in tip:
+        factors.append(f"📊 Low combined xG of {total_xg} — limited chance creation from both sides backs a tight finish")
+    elif "GG" in tip or "BTTS" in tip:
+        factors.append(f"📊 Both teams creating — {xg_h} xG home, {xg_a} xG away. Both likely to find the net")
+    else:
+        factors.append(f"📊 Combined xG: {total_xg} — {xg_h} home vs {xg_a} away")
 
-    # H2H
+    # ── Form factor — only show if we actually have data ────────────────────────
+    h_form_clean = [r for r in (h_form or []) if r.upper() in ("W","D","L")]
+    a_form_clean = [r for r in (a_form or []) if r.upper() in ("W","D","L")]
+    if h_form_clean and a_form_clean:
+        h_fs = sum(3 if r.upper()=="W" else 1 if r.upper()=="D" else 0 for r in h_form_clean[-5:])
+        a_fs = sum(3 if r.upper()=="W" else 1 if r.upper()=="D" else 0 for r in a_form_clean[-5:])
+        h_max = len(h_form_clean[-5:]) * 3; a_max = len(a_form_clean[-5:]) * 3
+        h_str = " ".join(h_form_clean[-5:]); a_str = " ".join(a_form_clean[-5:])
+        if h_fs > a_fs + 3:
+            factors.append(f"📈 <b>{h_short}</b> in better recent form — {h_str} ({h_fs}/{h_max}pts) vs {a_str} ({a_fs}/{a_max}pts)")
+        elif a_fs > h_fs + 3:
+            factors.append(f"📈 <b>{a_short}</b> the in-form side — {a_str} ({a_fs}/{a_max}pts) vs {h_str} ({h_fs}/{h_max}pts)")
+        else:
+            factors.append(f"📈 Form closely matched — {h_short}: {h_str} · {a_short}: {a_str}")
+    else:
+        factors.append("📈 Recent form data pending — prediction based on xG and league position")
+
+    # ── Standings ────────────────────────────────────────────────────────────────
+    if h_std and a_std:
+        gap = abs(h_std - a_std)
+        if h_std < a_std and gap >= 5:
+            factors.append(f"🏆 League table backs <b>{h_short}</b> — #{h_std} vs #{a_std}, clear quality gap")
+        elif a_std < h_std and gap >= 5:
+            factors.append(f"🏆 <b>{a_short}</b> superior in the table (#{a_std} vs #{h_std}) — travelling with confidence")
+        else:
+            factors.append(f"🏆 Table positions close — #{h_std} vs #{a_std}, evenly matched on paper")
+    elif h_std:
+        factors.append(f"🏆 {h_short} sitting #{h_std} in the league")
+    elif a_std:
+        factors.append(f"🏆 {a_short} sitting #{a_std} in the league")
+
+    # ── H2H ─────────────────────────────────────────────────────────────────────
     if h2h and h2h.get("total", 0) >= 3:
         tot = h2h["total"]
-        hw_h = h2h.get("home_wins", 0); aw_h = h2h.get("away_wins", 0); dr_h = h2h.get("draws", 0)
-        factors.append(f"🔁 H2H last {tot}: {hw_h}W {dr_h}D {aw_h}L for home side · Avg {h2h.get('avg_goals','?')} goals/game")
+        hw_h = h2h.get("home_wins", 0)
+        aw_h = h2h.get("away_wins", 0)
+        dr_h = h2h.get("draws", 0)
+        avg_g = h2h.get("avg_goals", "?")
+        dominant = h_short if hw_h > aw_h else (a_short if aw_h > hw_h else None)
+        h2h_txt = f"🔁 H2H last {tot}: {hw_h}W {dr_h}D {aw_h}L for home side · {avg_g} goals/game avg"
+        if dominant:
+            h2h_txt += f" · <b>{dominant}</b> historically dominant"
+        factors.append(h2h_txt)
 
-    # Goals context
-    if o25 >= 65:
-        factors.append(f"⚽ High-scoring game likely — Over 2.5 at {o25}% · Both teams creating freely")
-    elif o25 <= 38:
-        factors.append(f"🔒 Defensive encounter expected — Under 2.5 favoured ({round(100-o25,1)}%)")
-    if btts >= 62:
-        factors.append(f"🎯 Both teams score probability: {btts}% — open game expected")
+    # ── Goals market context — consistent with the tip ───────────────────────────
+    if "OVER 2.5" in tip or "OVER 3.5" in tip or "GG" in tip:
+        factors.append(f"⚽ Goal markets aligned — Over 2.5 at {o25}%, BTTS at {btts}% support the pick")
+    elif "UNDER 2.5" in tip:
+        factors.append(f"🔒 Defensive signals strong — Under 2.5 backed by {round(100-o25,1)}% probability and low xG")
+    elif o25 >= 60:
+        factors.append(f"⚽ Open game expected — Over 2.5 at {o25}%, BTTS at {btts}%")
 
-    # Injuries
-    total_inj = len(h_inj or []) + len(a_inj or [])
-    if total_inj > 0:
-        inj_txt = []
-        if h_inj: inj_txt.append(f"{len(h_inj)} home absentee(s)")
-        if a_inj: inj_txt.append(f"{len(a_inj)} away absentee(s)")
-        factors.append(f"🚑 Injury concern: {' · '.join(inj_txt)} — factor in team strength")
+    # ── Injuries ─────────────────────────────────────────────────────────────────
+    if h_inj or a_inj:
+        parts = []
+        if h_inj: parts.append(f"{len(h_inj)} home absentee(s) — {', '.join(i.get('player','?') for i in h_inj[:2])}")
+        if a_inj: parts.append(f"{len(a_inj)} away absentee(s) — {', '.join(i.get('player','?') for i in a_inj[:2])}")
+        factors.append("🚑 " + " · ".join(parts))
 
-    # Upset risk
-    upset = ""
+    # ── Upset risk — consistent with tip confidence ───────────────────────────────
     leading = max(hw, aw)
-    if leading < 50:
-        upset = "⚠️ <b>High upset risk</b> — No clear favourite, anything can happen"
-    elif leading < 60 and dw >= 27:
-        upset = "⚠️ <b>Moderate upset risk</b> — Draw very much in play at " + str(round(dw,1)) + "%"
-    elif leading >= 75:
-        upset = "✅ <b>Low upset risk</b> — Dominant favourite, form and xG aligned"
+    if prob >= 68 and leading >= 60:
+        upset = f"✅ <b>Low upset risk</b> — {round(prob,0):.0f}% probability with strong signal agreement"
+    elif dw >= 30 and leading < 55:
+        upset = f"⚠️ <b>Moderate upset risk</b> — Draw at {round(dw,1)}% is a real threat, consider double chance"
+    elif leading < 48:
+        upset = "⚠️ <b>Elevated upset risk</b> — Tight match, small margins will decide the outcome"
+    else:
+        upset = f"📌 <b>Manageable risk</b> — Favourite at {round(leading,1)}% with backing from key signals"
 
     factors_html = "".join(
-        f'<div style="font-size:.68rem;color:var(--t3);padding:5px 0;border-bottom:1px solid var(--bdr);line-height:1.5">{f}</div>'
+        f'<div style="font-size:.68rem;color:var(--t3);padding:6px 0;'
+        f'border-bottom:1px solid var(--bdr);line-height:1.6">{f}</div>'
         for f in factors
     )
-
     upset_html = (
-        '<div style="margin-top:8px;padding:8px 10px;background:rgba(255,159,10,.06);'
-        'border-left:2px solid var(--w);border-radius:4px;font-size:.67rem;color:var(--t3)">'
+        '<div style="margin-top:8px;padding:8px 10px;'
+        'background:rgba(255,159,10,.05);border-left:2px solid var(--w);'
+        'border-radius:4px;font-size:.67rem;color:var(--t3);line-height:1.5">'
         + upset + '</div>'
-    ) if upset else ""
+    )
 
     return (
-        score_chip
-        + '<div style="margin-top:12px;padding:12px;background:rgba(255,255,255,.02);'
+        '<div style="margin-top:12px;padding:14px;background:rgba(255,255,255,.02);'
         'border-radius:10px;border:1px solid var(--bdr)">'
         '<div style="font-size:.45rem;font-weight:700;letter-spacing:2px;color:var(--t3);'
-        'text-transform:uppercase;margin-bottom:8px">🧠 Analyst Intelligence</div>'
+        'text-transform:uppercase;margin-bottom:10px">🧠 Analyst Intelligence</div>'
         + factors_html
         + upset_html
         + '</div>'
