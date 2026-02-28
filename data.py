@@ -28,7 +28,7 @@ SM_URL   = "https://api.sportmonks.com/v3/football"
 WAT = 1  # UTC+1 Nigeria
 
 def _current_season():
-    n = datetime.now(timezone.utc)
+    n = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
     return n.year - 1 if n.month < 7 else n.year
 
 # ── MEMORY CACHE ──────────────────────────────────────────────────────────────
@@ -194,7 +194,7 @@ def _parse(raw):
         "away_id":  at.get("id"),   "away":   at.get("name","Away"),
         "league_id":lg.get("id",0), "league": lg.get("name",""),
         "country":  lg.get("country",""),
-        "season":   lg.get("season") or (datetime.now(timezone.utc).year - 1 if datetime.now(timezone.utc).month < 7 else datetime.now(timezone.utc).year),
+        "season":   lg.get("season") or _current_season(),
         "kickoff":  ko,
         "date_label":dl,
         "state":    f"{el}'" if live and el else ("FT" if ft else "NS"),
@@ -207,7 +207,7 @@ def _parse(raw):
 
 # ── FIXTURES ──────────────────────────────────────────────────────────────────
 def fixtures_for_date(date_str):
-    """ONE API-Football call per date. Falls back to football-data.org if needed."""
+    """API-Football fixtures with football-data.org fallback."""
     ck = f"date_{date_str}"
     v  = _mg(ck, 0.5)
     if v is not None: return v
@@ -215,21 +215,18 @@ def fixtures_for_date(date_str):
     if c:
         try: v=json.loads(c); _ms(ck,v); return v
         except: pass
-    # Try API-Football first
     raw = _afl("/fixtures", {"date":date_str,"timezone":"Africa/Lagos"}, ch=0.5)
     if raw is not None:
         result = [_parse(r) for r in raw if r.get("league",{}).get("id") in LEAGUES]
-        print(f"[data] AFL {date_str}: {len(raw)} raw -> {len(result)} matched")
+        print(f"[data] AFL {date_str}: {len(raw)} total -> {len(result)} matched")
         if result:
             _ms(ck, result); database.cache_set("h2h_cache", ck, json.dumps(result))
             return result
         if raw:
             ids = list(set(r.get("league",{}).get("id") for r in raw[:20]))
-            print(f"[data] AFL returned fixtures but none matched our LEAGUES set. Sample IDs: {ids}")
+            print(f"[data] AFL returned data but no league match. Sample IDs: {ids[:10]}")
     else:
-        print(f"[data] API-Football returned None for {date_str} (rate limit or key issue)")
-    # Fallback to football-data.org
-    print(f"[data] Falling back to football-data.org for {date_str}")
+        print(f"[data] AFL returned None for {date_str} — rate limited or key issue")
     result = _fd_fixtures_for_date(date_str)
     if result:
         _ms(ck, result); database.cache_set("h2h_cache", ck, json.dumps(result))
@@ -237,8 +234,8 @@ def fixtures_for_date(date_str):
 
 
 def _fd_fixtures_for_date(date_str):
-    """Fallback using football-data.org (free tier, no daily call limit)."""
-    CURRENT_SEASON = datetime.now(timezone.utc).year - 1 if datetime.now(timezone.utc).month < 7 else datetime.now(timezone.utc).year
+    """Fallback: football-data.org (10 top leagues, free, no daily limit)."""
+    SEASON = _current_season()
     result = []; seen = set()
     for lg_id, code in FD_CODES.items():
         try:
@@ -249,7 +246,7 @@ def _fd_fixtures_for_date(date_str):
             country = data.get("competition",{}).get("area",{}).get("name","")
             s_raw = data.get("season",{}).get("startDate","")
             try: season_yr = int(s_raw[:4])
-            except: season_yr = CURRENT_SEASON
+            except: season_yr = SEASON
             for m in matches:
                 fid = m.get("id")
                 if not fid or fid in seen: continue
@@ -257,9 +254,9 @@ def _fd_fixtures_for_date(date_str):
                 ss = m.get("status","SCHEDULED")
                 live = ss in ("IN_PLAY","PAUSED","HALF_TIME")
                 ft   = ss in ("FINISHED","AWARDED")
-                score = m.get("score",{})
-                sh = (score.get("fullTime",{}) or {}).get("home")
-                sa = (score.get("fullTime",{}) or {}).get("away")
+                sc = m.get("score",{})
+                sh = (sc.get("fullTime",{}) or {}).get("home")
+                sa = (sc.get("fullTime",{}) or {}).get("away")
                 h_team = m.get("homeTeam",{}); a_team = m.get("awayTeam",{})
                 ko = m.get("utcDate","")
                 kod = _dt(ko)
@@ -279,137 +276,171 @@ def _fd_fixtures_for_date(date_str):
                 })
         except Exception as e:
             print(f"[FD_fallback] {code}: {e}")
-    print(f"[data] FD fallback: {len(result)} fixtures for {date_str}")
+    print(f"[data] FD fallback: {len(result)} for {date_str}")
+    return result
+
+
+ESPN_LEAGUES = {
+    "eng.1":  (39,"Premier League","England"),   "esp.1": (140,"La Liga","Spain"),
+    "ita.1":  (135,"Serie A","Italy"),           "ger.1": (78,"Bundesliga","Germany"),
+    "fra.1":  (61,"Ligue 1","France"),           "eng.2": (40,"Championship","England"),
+    "eng.3":  (41,"League One","England"),       "ned.1": (88,"Eredivisie","Netherlands"),
+    "por.1":  (94,"Primeira Liga","Portugal"),   "tur.1": (203,"Super Lig","Turkey"),
+    "sco.1":  (179,"Scottish Prem","Scotland"),  "bel.1": (144,"Belgian Pro League","Belgium"),
+    "gre.1":  (197,"Greek Super League","Greece"),"mex.1":(262,"Liga MX","Mexico"),
+    "usa.1":  (253,"MLS","USA"),                 "bra.1": (71,"Brasileirao","Brazil"),
+    "arg.1":  (128,"Argentine Primera","Argentina"),"sau.1":(307,"Saudi Pro League","Saudi Arabia"),
+    "jpn.1":  (98,"J1 League","Japan"),          "den.1": (271,"Danish Superliga","Denmark"),
+    "swe.1":  (113,"Allsvenskan","Sweden"),      "nor.1": (103,"Eliteserien","Norway"),
+    "aut.1":  (218,"Austrian Bundesliga","Austria"),"pol.1":(106,"Ekstraklasa","Poland"),
+    "rom.1":  (207,"Romanian Liga 1","Romania"), "cze.1": (283,"Czech Liga","Czech Republic"),
+    "egy.1":  (233,"Egyptian Premier","Egypt"),  "rsa.1": (323,"South African PSL","South Africa"),
+    "uefa.champions":(2,"Champions League","Europe"),
+    "uefa.europa":   (3,"Europa League","Europe"),
+    "uefa.europa.conf":(848,"Conference League","Europe"),
+}
+
+def _espn_fixtures(days=3, wat_now=None):
+    if wat_now is None: wat_now = datetime.now(timezone.utc)+timedelta(hours=WAT)
+    result = []
+    for slug, (lg_id, lg_name, country) in ESPN_LEAGUES.items():
+        for i in range(days):
+            d = (wat_now+timedelta(days=i)).strftime("%Y%m%d")
+            ck = f"espn_{slug}_{d}"
+            cached = _mg(ck, 1)
+            if cached is not None:
+                result.extend(cached); continue
+            try:
+                r = requests.get(
+                    f"https://site.api.espn.com/apis/site/v2/sports/soccer/{slug}/scoreboard",
+                    params={"dates":d}, timeout=8)
+                if r.status_code != 200: continue
+                day_fx = []
+                for ev in r.json().get("events",[]):
+                    comp = ev.get("competitions",[{}])[0]
+                    competitors = comp.get("competitors",[])
+                    if len(competitors)<2: continue
+                    home = next((c for c in competitors if c.get("homeAway")=="home"),competitors[0])
+                    away = next((c for c in competitors if c.get("homeAway")=="away"),competitors[1])
+                    state = comp.get("status",{}).get("type",{}).get("state","pre")
+                    live = state=="in"; ft = state=="post"
+                    h_sc = int(home.get("score",0)) if (live or ft) else None
+                    a_sc = int(away.get("score",0)) if (live or ft) else None
+                    ko = comp.get("date",ev.get("date",""))
+                    kod = _dt(ko)
+                    tod = (datetime.now(timezone.utc)+timedelta(hours=WAT)).date()
+                    tmr = tod+timedelta(days=1)
+                    dl = "TODAY" if kod.date()==tod else ("TOMORROW" if kod.date()==tmr else kod.strftime("%a %d %b").lstrip("0").upper())
+                    fid = f"E{lg_id}_{ev.get('id','')}"
+                    fx = {
+                        "id": fid,
+                        "home_id": None, "home": home.get("team",{}).get("displayName","Home"),
+                        "away_id": None, "away": away.get("team",{}).get("displayName","Away"),
+                        "league_id":lg_id,"league":lg_name,"country":country,
+                        "season":_current_season(),"kickoff":ko,"date_label":dl,
+                        "state":"LIVE" if live else ("FT" if ft else "NS"),
+                        "is_live":live,"is_ft":ft,"is_ns":not live and not ft,
+                        "score_h":h_sc,"score_a":a_sc,"venue":"","referee":None,"_raw":ev,
+                    }
+                    day_fx.append(fx); result.append(fx)
+                _ms(ck, day_fx)
+            except Exception as e:
+                print(f"[ESPN] {slug} {d}: {e}")
+    print(f"[ESPN] {len(result)} fixtures fetched")
     return result
 
 def get_fixtures_window(days=3):
-    """Fixtures for today + next N days. Merges ALL available sources."""
+    """Fetch fixtures from ALL sources, deduplicate by team names, sort by kickoff."""
     wat_now = datetime.now(timezone.utc) + timedelta(hours=WAT)
-    ck = f"win_{days}_{wat_now.strftime('%Y-%m-%d')}"
-    v  = _mg(ck, 0.4)
+    ck = f"win2_{days}_{wat_now.strftime('%Y-%m-%d-%H')}"
+    v  = _mg(ck, 0.33)
     if v is not None: return v
-    all_fx = []; seen = set()
+
+    all_fx = []; seen_ids = set(); seen_matches = set()
+
+    def _add(fx):
+        """Add fixture only if not a duplicate by (home_name, away_name, date)."""
+        fid = fx.get("id")
+        h = str(fx.get("home","")).lower().strip()[:10]
+        a = str(fx.get("away","")).lower().strip()[:10]
+        ko = str(fx.get("kickoff",""))[:10]
+        match_key = f"{h}_{a}_{ko}"
+        if fid and str(fid) in seen_ids: return
+        if match_key in seen_matches: return
+        if fid: seen_ids.add(str(fid))
+        seen_matches.add(match_key)
+        all_fx.append(fx)
+
+    # Source 1: API-Football (best data, rate limited)
     for i in range(days):
         d = (wat_now + timedelta(days=i)).strftime("%Y-%m-%d")
         for fx in fixtures_for_date(d):
-            if fx["id"] and fx["id"] not in seen:
-                seen.add(fx["id"]); all_fx.append(fx)
-    # Supplement with ESPN free API (no key, no limit, covers 30+ leagues)
+            _add(fx)
+
+    # Source 2: ESPN (free, no limit, 30+ leagues)
     try:
-        espn_fx = _espn_fixtures_window(days)
-        for fx in espn_fx:
-            key = f"espn_{fx['id']}"
-            if key not in seen:
-                seen.add(key); all_fx.append(fx)
+        for fx in _espn_fixtures(days, wat_now):
+            _add(fx)
     except Exception as e:
-        print(f"[ESPN] window error: {e}")
+        print(f"[ESPN] {e}")
+
     all_fx.sort(key=lambda f: f["kickoff"] or "")
     _ms(ck, all_fx)
     return all_fx
 
+def enrich_from_card(card):
+    """
+    Build enrichment dict from a fixture card alone (no API call needed).
+    Used for ESPN fixtures which have string IDs incompatible with AFL.
+    Uses Poisson from league-calibrated xG baselines + standings when available.
+    """
+    lg_id   = card.get("league_id", 0)
+    season  = card.get("season") or _current_season()
+    h_name  = card.get("home","Home")
+    a_name  = card.get("away","Away")
+    h_id    = card.get("home_id")
+    a_id    = card.get("away_id")
 
-ESPN_LEAGUES = {
-    # (slug, league_id_we_use, league_name, country)
-    "eng.1":    (39,  "Premier League",    "England"),
-    "esp.1":    (140, "La Liga",           "Spain"),
-    "ita.1":    (135, "Serie A",           "Italy"),
-    "ger.1":    (78,  "Bundesliga",        "Germany"),
-    "fra.1":    (61,  "Ligue 1",           "France"),
-    "uefa.champions": (2,  "Champions League", "Europe"),
-    "uefa.europa":    (3,  "Europa League",    "Europe"),
-    "uefa.europa.conf": (848, "Conference League", "Europe"),
-    "eng.2":    (40,  "Championship",      "England"),
-    "eng.3":    (41,  "League One",        "England"),
-    "ned.1":    (88,  "Eredivisie",        "Netherlands"),
-    "por.1":    (94,  "Primeira Liga",     "Portugal"),
-    "tur.1":    (203, "Super Lig",         "Turkey"),
-    "sco.1":    (179, "Scottish Prem",     "Scotland"),
-    "bel.1":    (144, "Belgian Pro League","Belgium"),
-    "gre.1":    (197, "Greek Super League","Greece"),
-    "mex.1":    (262, "Liga MX",           "Mexico"),
-    "usa.1":    (253, "MLS",               "USA"),
-    "bra.1":    (71,  "Brasileirao",       "Brazil"),
-    "arg.1":    (128, "Argentine Primera", "Argentina"),
-    "sau.1":    (307, "Saudi Pro League",  "Saudi Arabia"),
-    "jpn.1":    (98,  "J1 League",         "Japan"),
-    "den.1":    (271, "Danish Superliga",  "Denmark"),
-    "swe.1":    (113, "Allsvenskan",       "Sweden"),
-    "nor.1":    (103, "Eliteserien",       "Norway"),
-    "aut.1":    (218, "Austrian Bundesliga","Austria"),
-    "pol.1":    (106, "Ekstraklasa",       "Poland"),
-    "rom.1":    (207, "Romanian Liga 1",   "Romania"),
-    "cze.1":    (283, "Czech Liga",        "Czech Republic"),
-    "egy.1":    (233, "Egyptian Premier",  "Egypt"),
-    "rsa.1":    (323, "South African PSL", "South Africa"),
-}
+    # Try to get form and standings even for ESPN fixtures
+    h_form = get_form(h_id, lg_id, season) if h_id else []
+    a_form = get_form(a_id, lg_id, season) if a_id else []
+    stds   = get_standings(lg_id, season)
+    h_std  = stds.get(h_id) or stds.get(h_name)
+    a_std  = stds.get(a_id) or stds.get(a_name)
 
-def _espn_fixtures_window(days=3):
-    """ESPN public API — free, no key, covers 30+ leagues."""
-    wat_now = datetime.now(timezone.utc) + timedelta(hours=WAT)
-    result = []; seen = set()
-    for slug, (lg_id, lg_name, country) in ESPN_LEAGUES.items():
-        for i in range(days):
-            d = (wat_now + timedelta(days=i)).strftime("%Y%m%d")
-            ck = f"espn_{slug}_{d}"
-            cached = _mg(ck, 1)
-            if cached is not None:
-                for fx in cached:
-                    k = f"espn_{fx['id']}"
-                    if k not in seen: seen.add(k); result.append(fx)
-                continue
-            try:
-                url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{slug}/scoreboard"
-                r = requests.get(url, params={"dates": d}, timeout=10)
-                if r.status_code != 200: continue
-                data = r.json()
-                day_fx = []
-                for ev in data.get("events", []):
-                    comp = ev.get("competitions", [{}])[0]
-                    competitors = comp.get("competitors", [])
-                    if len(competitors) < 2: continue
-                    home = next((c for c in competitors if c.get("homeAway")=="home"), competitors[0])
-                    away = next((c for c in competitors if c.get("homeAway")=="away"), competitors[1])
-                    status = comp.get("status", {})
-                    ss = status.get("type", {}).get("shortDetail", "NS")
-                    state = status.get("type", {}).get("state", "pre")
-                    live = state == "in"
-                    ft   = state == "post"
-                    h_sc = int(home.get("score", 0)) if (live or ft) else None
-                    a_sc = int(away.get("score", 0)) if (live or ft) else None
-                    ko = comp.get("date", ev.get("date",""))
-                    kod = _dt(ko)
-                    tod = (datetime.now(timezone.utc)+timedelta(hours=WAT)).date()
-                    tmr = tod + timedelta(days=1)
-                    if kod.date()==tod:  dl="TODAY"
-                    elif kod.date()==tmr: dl="TOMORROW"
-                    else: dl=kod.strftime("%a %d %b").lstrip("0").upper()
-                    fid = f"{lg_id}_{ev.get('id','')}"
-                    fx = {
-                        "id": fid,
-                        "home_id": home.get("team",{}).get("id"),
-                        "home":    home.get("team",{}).get("displayName","Home"),
-                        "away_id": away.get("team",{}).get("id"),
-                        "away":    away.get("team",{}).get("displayName","Away"),
-                        "league_id": lg_id, "league": lg_name, "country": country,
-                        "season":  _current_season(),
-                        "kickoff": ko, "date_label": dl,
-                        "state":   ss if live else ("FT" if ft else "NS"),
-                        "is_live": live, "is_ft": ft, "is_ns": not live and not ft,
-                        "score_h": h_sc, "score_a": a_sc,
-                        "venue": "", "referee": None, "_raw": ev,
-                    }
-                    day_fx.append(fx)
-                    k = f"espn_{fid}"
-                    if k not in seen: seen.add(k); result.append(fx)
-                _ms(ck, day_fx)
-            except Exception as e:
-                print(f"[ESPN] {slug} {d}: {e}")
-    print(f"[ESPN] fetched {len(result)} fixtures")
-    return result
+    xg_h = estimate_xg(h_form, h_std, True)
+    xg_a = estimate_xg(a_form, a_std, False)
+    hw, dw, aw, o25, o15, bt = poisson_probs(xg_h, xg_a)
+    o35 = round(max(o25 - 22, 4.0), 1)
+
+    return {
+        "fixture_id":  card.get("id"),
+        "home_id":     h_id,    "away_id":    a_id,
+        "home_name":   h_name,  "away_name":  a_name,
+        "league_id":   lg_id,   "league_name":card.get("league",""),
+        "country":     card.get("country",""),
+        "season":      season,
+        "kickoff":     card.get("kickoff",""),
+        "state":       card.get("state","NS"),
+        "referee":     None,
+        "score_home":  card.get("score_h"),
+        "score_away":  card.get("score_a"),
+        "home_win":    hw,    "draw":    dw,    "away_win": aw,
+        "over_25":     o25,   "over_15": o15,   "btts":    bt,
+        "over_35":     o35,
+        "xg_home":     xg_h, "xg_away": xg_a,
+        "home_form":   h_form,"away_form":  a_form,
+        "h2h":         get_h2h(h_id, a_id) if h_id and a_id else {},
+        "home_standing":h_std,"away_standing":a_std,
+        "home_lineup": [], "away_lineup": [],
+        "goals":       [], "cards":       [],
+        "home_stats":  {}, "away_stats":  {},
+        "odds_home":   None,"odds_draw":  None,"odds_away": None,
+        "odds_o25":    None,"odds_o15":   None,"odds_btts": None,
+        "home_injuries":[], "away_injuries":[],
+    }
 
 
-
-def get_live_fixtures():
     raw = _afl("/fixtures", {"live":"all"}, ch=0.08) or []
     return [_parse(r) for r in raw if r.get("league",{}).get("id") in LEAGUES]
 
@@ -630,7 +661,7 @@ def enrich(fid, card=None):
     """Full enrichment for one fixture. All 4 APIs. Returns analyst-ready dict."""
     c = card or {}
     h_id  = c.get("home_id");  a_id  = c.get("away_id")
-    lg_id = c.get("league_id",0); season = c.get("season") or _current_season()
+    lg_id = c.get("league_id",0); season = c.get("season",2025)
     h_nm  = c.get("home","Home"); a_nm  = c.get("away","Away")
     state = c.get("state","NS"); kickoff = c.get("kickoff","")
     score_h = c.get("score_h"); score_a = c.get("score_a")
