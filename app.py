@@ -350,8 +350,6 @@ def form_dots(form_list):
         html += f'<div class="fd {cls}">{r}</div>'
     return html + '</div>'
 
-def tip_clr(tip): return tip_color(tip)
-
 def tip_color(tip):
     if not tip: return "var(--wh)"
     t = tip.upper()
@@ -362,198 +360,130 @@ def tip_color(tip):
     if "UNDER" in t or "NG" in t: return "var(--t3)"
     return "var(--wh)"
 
-def _smart_tag(rec_tip, rec_conv, rec_prob, hw, dw, aw, h_form, a_form,
-               h_inj, a_inj, h_std, a_std, xg_h, xg_a, lg_name):
-    """
-    Intelligent tagging — weighs multiple independent signals.
-    Produces SURE MATCH / RELIABLE / SOLID / VOLATILE / AVOID / MONITOR.
-    """
-    h_form_c = [r for r in (h_form or []) if r.upper() in ("W","D","L")]
-    a_form_c = [r for r in (a_form or []) if r.upper() in ("W","D","L")]
-    h_fs = sum(3 if r.upper()=="W" else 1 if r.upper()=="D" else 0 for r in h_form_c[-5:]) if h_form_c else None
-    a_fs = sum(3 if r.upper()=="W" else 1 if r.upper()=="D" else 0 for r in a_form_c[-5:]) if a_form_c else None
+def tip_clr(tip): return tip_color(tip)
 
-    h_slump = (h_form_c[-3:].count("L") >= 3) if len(h_form_c) >= 3 else False
-    a_slump = (a_form_c[-3:].count("L") >= 3) if len(a_form_c) >= 3 else False
-    h_hot   = (h_form_c[-3:].count("W") >= 3) if len(h_form_c) >= 3 else False
-    a_hot   = (a_form_c[-3:].count("W") >= 3) if len(a_form_c) >= 3 else False
-    total_inj  = len(h_inj or []) + len(a_inj or [])
-    fav_prob   = max(hw, aw)
-    lg_low     = (lg_name or "").lower()
-    is_cup     = any(w in lg_low for w in ["cup","copa","carabao","pokal","fa cup","coupe"])
-    is_friendly= "friendly" in lg_low
-    xg_total   = xg_h + xg_a
-    xg_dominant= (xg_h > xg_a * 1.5 and "HOME" in rec_tip) or (xg_a > xg_h * 1.5 and "AWAY" in rec_tip)
-
-    # All signals pointing same direction
-    signals_agree = 0
-    if h_fs is not None and a_fs is not None:
-        if "HOME" in rec_tip and h_fs > a_fs: signals_agree += 1
-        if "AWAY" in rec_tip and a_fs > h_fs: signals_agree += 1
-    if h_std and a_std:
-        if "HOME" in rec_tip and h_std < a_std: signals_agree += 1
-        if "AWAY" in rec_tip and a_std < h_std: signals_agree += 1
-    if xg_dominant: signals_agree += 1
-
-    # SURE MATCH: dominant, no injury crisis, signals aligned, not cup
-    if fav_prob >= 72 and rec_conv >= 62 and total_inj == 0 and signals_agree >= 2 and not is_cup:
-        return "SURE MATCH", "sure"
-    # RELIABLE: strong conviction, multiple signals agree
-    if rec_conv >= 58 and rec_prob >= 55 and signals_agree >= 2:
-        return "RELIABLE", "reliable"
-    # VOLATILE: friendly or heavily cup-affected
-    if is_friendly:
-        return "VOLATILE", "volatile"
-    # AVOID: slumping team being predicted to win, or injury crisis + low confidence
-    if (h_slump and "HOME" in rec_tip) or (a_slump and "AWAY" in rec_tip):
-        return "AVOID", "avoid"
-    if total_inj >= 4 and rec_conv < 50:
-        return "AVOID", "avoid"
-    # Very balanced 3-way — unpredictable
-    if abs(hw - dw) < 6 and abs(dw - aw) < 6 and fav_prob < 46:
-        return "AVOID", "avoid"
-    # SOLID: decent conviction
-    if rec_conv >= 44:
-        return "SOLID", "solid"
-    return "MONITOR", "monitor"
-
-
-def _analyst_block(h_name, a_name, xg_h, xg_a, h_form, a_form,
+def _smart_analyst(h_name, a_name, xg_h, xg_a, h_form, a_form,
                    h_std, a_std, h2h, tip, prob, hw, dw, aw,
                    o25, btts, h_inj, a_inj):
-    """
-    World-class analyst intelligence block.
-    Every line is consistent with the recommended tip.
-    No contradictions. Reads like a human expert wrote it.
-    """
-    h_s = h_name.split()[0]; a_s = a_name.split()[0]
-    total_xg = round(xg_h + xg_a, 2)
-    h_form_c = [r for r in (h_form or []) if r.upper() in ("W","D","L")]
-    a_form_c = [r for r in (a_form or []) if r.upper() in ("W","D","L")]
+    """Analyst intelligence block — always consistent with recommended tip."""
+    import match_predictor as mp
+    hs = h_name.split()[0]; as_ = a_name.split()[0]
+    tx = round(xg_h+xg_a,2)
+    hfc = [r for r in (h_form or []) if r.upper() in ("W","D","L")]
+    afc = [r for r in (a_form or []) if r.upper() in ("W","D","L")]
+    ht = mp.form_trend(hfc); at_ = mp.form_trend(afc)
+    hfs = mp.form_score(hfc); afs = mp.form_score(afc)
+    t   = tip.upper()
     factors = []
 
-    # ── xG narrative — always aligned with tip ────────────────────────────────
-    xg_diff = abs(xg_h - xg_a)
-    if "HOME" in tip:
+    # xG — always tip-aligned
+    if "HOME WIN" in t and "EITHER" not in t:
         if xg_h >= xg_a:
-            factors.append(f"📊 <b>{h_s}</b> leading chance creation — {xg_h} xG vs {xg_a} xG. Home advantage amplified by superior attacking output")
+            factors.append(f"📊 <b>{hs}</b> leading chance creation — {xg_h} xG vs {xg_a} xG supports home advantage")
         else:
-            factors.append(f"📊 xG close ({xg_h} vs {xg_a}) but home advantage, form and positional data back <b>{h_s}</b> to edge this")
-    elif "AWAY" in tip:
+            factors.append(f"📊 xG close ({xg_h} vs {xg_a}) — form, table and home advantage still tip this toward <b>{hs}</b>")
+    elif "AWAY WIN" in t and "EITHER" not in t:
         if xg_a >= xg_h:
-            factors.append(f"📊 <b>{a_s}</b> generating more danger — {xg_a} xG on road vs {xg_h} xG for hosts. Away quality shining through")
+            factors.append(f"📊 <b>{as_}</b> generating more danger on road — {xg_a} xG vs {xg_h} xG, quality is clear")
         else:
-            factors.append(f"📊 Narrow xG gap ({xg_h} vs {xg_a}) but form momentum and table strength back <b>{a_s}</b> despite the away fixture")
-    elif "OVER 2.5" in tip or "OVER 3.5" in tip:
-        factors.append(f"📊 Combined xG of {total_xg} signals a high-scoring affair — both sides creating and neither defence convincing")
-    elif "UNDER 2.5" in tip:
-        factors.append(f"📊 Low combined xG of {total_xg} — neither side creating freely. Tight, low-scoring match backed by the numbers")
-    elif "GG" in tip or "BTTS" in tip:
-        factors.append(f"📊 Both creating real chances — {xg_h} xG home, {xg_a} xG away. Both teams have the firepower to score")
-    elif "DRAW" in tip:
-        factors.append(f"📊 xG almost identical ({xg_h} vs {xg_a}) — chance creation perfectly balanced, stalemate firmly on the cards")
-
-    # ── Form — only if we have real data ─────────────────────────────────────
-    if h_form_c and a_form_c:
-        h_fs = sum(3 if r.upper()=="W" else 1 if r.upper()=="D" else 0 for r in h_form_c[-5:])
-        a_fs = sum(3 if r.upper()=="W" else 1 if r.upper()=="D" else 0 for r in a_form_c[-5:])
-        h_max = len(h_form_c[-5:])*3; a_max = len(a_form_c[-5:])*3
-        h_str = " ".join(h_form_c[-5:]); a_str = " ".join(a_form_c[-5:])
-        h_hot = h_form_c[-3:].count("W") >= 3
-        a_hot = a_form_c[-3:].count("W") >= 3
-        h_cold= h_form_c[-3:].count("L") >= 2
-        a_cold= a_form_c[-3:].count("L") >= 2
-        if h_hot:
-            factors.append(f"📈 <b>{h_s} on fire</b> — {h_str} ({h_fs}/{h_max}pts). Last 3: W W W. Momentum firmly with the home side")
-        elif a_hot:
-            factors.append(f"📈 <b>{a_s} flying</b> — {a_str} ({a_fs}/{a_max}pts). Last 3: W W W. Away form impossible to ignore")
-        elif h_cold and "HOME" in tip:
-            factors.append(f"📉 <b>{h_s}</b> poor recent form ({h_str}) — but xG and position still give home edge. High-risk pick")
-        elif a_cold and "AWAY" in tip:
-            factors.append(f"📉 <b>{a_s}</b> struggling ({a_str}) — away form unconvincing, this is a value pick based on underlying data")
-        elif h_fs > a_fs + 3:
-            factors.append(f"📈 Home form edge — {h_s}: {h_str} ({h_fs}pts) vs {a_s}: {a_str} ({a_fs}pts)")
-        elif a_fs > h_fs + 3:
-            factors.append(f"📈 Away form stronger — {a_s}: {a_str} ({a_fs}pts) vs {h_s}: {h_str} ({h_fs}pts)")
-        else:
-            factors.append(f"📈 Form evenly matched — {h_s}: {h_str} · {a_s}: {a_str}")
+            factors.append(f"📊 xG narrow ({xg_h} vs {xg_a}) — form and table back <b>{as_}</b> despite home advantage for hosts")
+    elif "OVER" in t:
+        factors.append(f"📊 Combined xG of {tx} backs a goals-heavy encounter — both teams creating real chances")
+    elif "UNDER" in t:
+        factors.append(f"📊 Low combined xG ({tx}) — limited creation from both sides supports a tight, low-scoring finish")
+    elif "GG" in t:
+        factors.append(f"📊 Both attacking units creating — {xg_h} xG home, {xg_a} xG away. Both likely to convert")
+    elif "DRAW" in t:
+        factors.append(f"📊 xG virtually identical ({xg_h} vs {xg_a}) — chance creation perfectly balanced, draw firmly on")
     else:
-        factors.append("📈 Recent form data loading — prediction grounded in xG model and league position")
+        factors.append(f"📊 Combined xG {tx} — home {xg_h}, away {xg_a}")
 
-    # ── Standings ─────────────────────────────────────────────────────────────
+    # Form — only if real data
+    if len(hfc) >= 3 and len(afc) >= 3:
+        h_pts = sum(3 if r=="W" else 1 if r=="D" else 0 for r in hfc[-5:])
+        a_pts = sum(3 if r=="W" else 1 if r=="D" else 0 for r in afc[-5:])
+        hm = len(hfc[-5:])*3; am = len(afc[-5:])*3
+        h_hot = hfc[-3:].count("W")>=3; a_hot = afc[-3:].count("W")>=3
+        h_cold= hfc[-3:].count("L")>=2; a_cold= afc[-3:].count("L")>=2
+        if h_hot:
+            factors.append(f"📈 <b>{hs} on fire</b> — W W W in last 3, {h_pts}/{hm}pts. Momentum firmly with the home side")
+        elif a_hot:
+            factors.append(f"📈 <b>{as_} flying</b> — W W W in last 3, {a_pts}/{am}pts. In-form away side is dangerous")
+        elif h_cold and "HOME" in t:
+            factors.append(f"📉 <b>{hs}</b> cold spell ({' '.join(hfc[-5:])}) — high-risk pick, only xG and table back this")
+        elif a_cold and "AWAY" in t:
+            factors.append(f"📉 <b>{as_}</b> struggling ({' '.join(afc[-5:])}) — value pick based on underlying data, not recent results")
+        elif h_pts > a_pts+3:
+            factors.append(f"📈 Home form edge — {hs}: {' '.join(hfc[-5:])} ({h_pts}pts) vs {as_}: {' '.join(afc[-5:])} ({a_pts}pts)")
+        elif a_pts > h_pts+3:
+            factors.append(f"📈 Away form stronger — {as_}: {' '.join(afc[-5:])} ({a_pts}pts) vs {hs}: {' '.join(hfc[-5:])} ({h_pts}pts)")
+        else:
+            factors.append(f"📈 Form closely matched — {hs}: {' '.join(hfc[-5:])} · {as_}: {' '.join(afc[-5:])}")
+    else:
+        factors.append("📈 Recent form loading — prediction based on xG model and league position")
+
+    # Standings
     if h_std and a_std:
         gap = h_std - a_std
-        if gap <= -8:
-            factors.append(f"🏆 <b>Clear quality gap</b> — {h_s} #{h_std} vs {a_s} #{a_std}. Home side significantly superior in the table")
-        elif gap >= 8:
-            factors.append(f"🏆 <b>Away team the better side on paper</b> — {a_s} #{a_std} vs {h_s} #{h_std}. Table doesn't lie")
-        elif abs(gap) <= 3:
-            factors.append(f"🏆 Near-identical league standing — #{h_std} vs #{a_std}. Fine margins will decide this")
-        else:
-            leader = h_s if gap < 0 else a_s
-            factors.append(f"🏆 <b>{leader}</b> has a table advantage — #{h_std} vs #{a_std}")
-    elif h_std:
-        factors.append(f"🏆 {h_s} sitting #{h_std} in the league")
-    elif a_std:
-        factors.append(f"🏆 {a_s} sitting #{a_std} away from home")
+        if gap <= -7: factors.append(f"🏆 <b>Clear quality gap</b> — {hs} #{h_std} vs {as_} #{a_std}. Home superiority evident")
+        elif gap >= 7: factors.append(f"🏆 <b>Away team superior on paper</b> — {as_} #{a_std} vs {hs} #{h_std}")
+        else: factors.append(f"🏆 Table positions close — #{h_std} vs #{a_std}, fine margins will decide")
+    elif h_std: factors.append(f"🏆 {hs} sitting #{h_std} in the league")
+    elif a_std:  factors.append(f"🏆 {as_} sitting #{a_std} away from home")
 
-    # ── H2H ──────────────────────────────────────────────────────────────────
-    if h2h and h2h.get("total",0) >= 3:
+    # H2H
+    if h2h and h2h.get("total",0)>=3:
         tot=h2h["total"]; hw_h=h2h.get("home_wins",0); aw_h=h2h.get("away_wins",0)
-        dr_h=h2h.get("draws",0); avg_g=h2h.get("avg_goals","?")
-        gg_pct=h2h.get("btts_pct",0); o25_pct=h2h.get("over_25_pct",0)
-        dominant = h_s if hw_h > aw_h+1 else (a_s if aw_h > hw_h+1 else None)
-        h2h_line = f"🔁 H2H last {tot} — {hw_h}W {dr_h}D {aw_h}L (home) · {avg_g} goals/game"
-        if dominant: h2h_line += f" · <b>{dominant}</b> historically dominant"
-        if gg_pct >= 60: h2h_line += f" · Both teams scored in {gg_pct}% of meetings"
-        if o25_pct >= 60: h2h_line += f" · Over 2.5 in {o25_pct}% of clashes"
-        factors.append(h2h_line)
+        dr=h2h.get("draws",0); ag=h2h.get("avg_goals","?")
+        dom = hs if hw_h>aw_h+1 else (as_ if aw_h>hw_h+1 else None)
+        line = f"🔁 H2H last {tot}: {hw_h}W {dr}D {aw_h}L (home) · {ag} goals/game avg"
+        if dom: line += f" · <b>{dom}</b> historically dominant"
+        if h2h.get("btts_pct",0)>=60: line += f" · BTTS in {h2h['btts_pct']}% of meetings"
+        factors.append(line)
 
-    # ── Goals context — tip-consistent ───────────────────────────────────────
-    if "OVER 2.5" in tip or "OVER 3.5" in tip or "GG" in tip:
-        factors.append(f"⚽ Goal signals aligned — BTTS {btts}%, Over 2.5 at {o25}%. Both teams in scoring form")
-    elif "UNDER 2.5" in tip:
-        factors.append(f"🔒 Under 2.5 backed at {round(100-o25,1)}% — low xG, defensive structure likely to hold")
-    elif o25 >= 58:
-        factors.append(f"⚽ Goals market active — Over 2.5 probability: {o25}% · BTTS: {btts}%")
+    # Goals context — tip-consistent
+    if "OVER" in t and "2.5" in t:
+        factors.append(f"⚽ Goal signals aligned — Over 2.5 at {o25}%, BTTS {btts}%")
+    elif "UNDER" in t:
+        factors.append(f"🔒 Under 2.5 probability: {round(100-o25,1)}% — low xG and defensive signals agree")
+    elif "GG" in t:
+        factors.append(f"⚽ BTTS probability {btts}% — both teams have the attacking quality to score")
+    elif o25>=58:
+        factors.append(f"⚽ Goals market active — Over 2.5: {o25}% · BTTS: {btts}%")
 
-    # ── Injuries ──────────────────────────────────────────────────────────────
+    # Injuries
     if h_inj or a_inj:
-        parts = []
-        if h_inj: parts.append(f"<b>{h_s}:</b> {', '.join(i.get('player','?') for i in h_inj[:3])} out")
-        if a_inj: parts.append(f"<b>{a_s}:</b> {', '.join(i.get('player','?') for i in a_inj[:3])} out")
-        factors.append("🚑 Injuries — " + " · ".join(parts))
+        parts=[]
+        if h_inj: parts.append(f"<b>{hs}:</b> {', '.join(i.get('player','?') for i in h_inj[:3])} out")
+        if a_inj: parts.append(f"<b>{as_}:</b> {', '.join(i.get('player','?') for i in a_inj[:3])} out")
+        factors.append("🚑 " + " · ".join(parts))
 
-    # ── Upset risk — fully consistent with confidence ─────────────────────────
-    fav = max(hw, aw)
-    if prob >= 68 and fav >= 62:
-        upset = f"✅ <b>Low upset risk</b> — Strong {round(prob,0):.0f}% probability with xG, form and table all pointing the same way"
-    elif dw >= 30 and fav < 52:
-        upset = f"⚠️ <b>Draw is a real threat</b> at {round(dw,1)}% — consider covering with a Double Chance if staking"
-    elif fav < 50:
-        upset = "⚠️ <b>Elevated upset risk</b> — No dominant favourite. Thin margins, proceed with caution"
-    elif fav >= 62:
-        upset = f"📌 <b>Manageable risk</b> — Favourite backed at {round(fav,1)}% with reasonable signal alignment"
+    # Upset risk
+    fav = max(hw,aw)
+    if prob>=68 and fav>=62:
+        upset = f"✅ <b>Low upset risk</b> — {round(prob):.0f}% with xG, form and table all aligned"
+    elif dw>=30 and fav<52:
+        upset = f"⚠️ <b>Draw a real threat</b> at {round(dw,1)}% — consider covering with Double Chance if staking"
+    elif fav<48:
+        upset = "⚠️ <b>Elevated upset risk</b> — no dominant favourite, thin margins will decide"
     else:
-        upset = f"📌 <b>Moderate confidence</b> — {round(prob,0):.0f}% probability. This is a calculated bet, not a certainty"
+        upset = f"📌 <b>Manageable risk</b> — {round(prob):.0f}% probability with reasonable signal alignment"
 
-    factors_html = "".join(
+    rows = "".join(
         f'<div style="font-size:.69rem;color:var(--t3);padding:7px 0;'
         f'border-bottom:1px solid var(--bdr);line-height:1.6">{f}</div>'
-        for f in factors
-    )
+        for f in factors)
     return (
         '<div style="margin-top:12px;padding:14px;background:rgba(255,255,255,.02);'
         'border-radius:12px;border:1px solid var(--bdr)">'
         '<div style="font-size:.45rem;font-weight:700;letter-spacing:2.5px;'
         'color:var(--t3);text-transform:uppercase;margin-bottom:10px">🧠 Analyst Intelligence</div>'
-        + factors_html
+        + rows
         + f'<div style="margin-top:10px;padding:10px;background:rgba(255,159,10,.05);'
         f'border-left:3px solid var(--w);border-radius:6px;font-size:.68rem;'
         f'color:var(--t3);line-height:1.6">{upset}</div>'
-        + '</div>'
+        + "</div>"
     )
-
 
 def get_quick_pred(fixture_card):
     """Quick prediction from form+xG for fixture list display. No extra API calls."""
@@ -575,8 +505,7 @@ def get_quick_pred(fixture_card):
         hw, dw, aw, o15, o25, o35, bt, bt, round(100-bt,1),
         xg_h, xg_a, h_form, a_form, h_std, a_std,
         None, None, None, None, None, None)
-    tag = _smart_tag(tip, conv, prob, hw, dw, aw, h_form, a_form,
-                     [], [], h_std, a_std, xg_h, xg_a, "")[0]
+    tag = match_predictor.smart_tag(tip,conv,prob,hw,dw,aw,h_form,a_form,[],[],h_std,a_std,xg_h,xg_a,"",0.5)[0]
     return {"tip":tip,"prob":prob,"conv":conv,"tag":tag}
 
 # ── ROUTES ────────────────────────────────────────────────────────────────────
@@ -739,15 +668,15 @@ def league_page(league_id):
             else:
                 try:
                     pred = get_quick_pred(c)
-                    tip_short = pred["tip"].replace(" WIN","").replace("OVER ","O").replace(" GOALS","").strip()
+                    ts = pred["tip"].replace(" WIN","").replace("OVER ","O").replace(" GOALS","").strip()
                     tv = pred["tag"]
-                    tc2 = ("var(--g)" if tv in ("RELIABLE","SURE MATCH") else
-                           "var(--r)" if tv=="AVOID" else
-                           "var(--w)" if tv=="VOLATILE" else
-                           "var(--b)" if tv=="SOLID" else "var(--t2)")
+                    tc2 = ("var(--g)" if tv in ("SURE MATCH","RELIABLE")
+                           else "var(--r)" if tv=="AVOID"
+                           else "var(--w)" if tv=="VOLATILE"
+                           else "var(--b)" if tv=="SOLID" else "var(--t2)")
                     right_html = (
                         '<div class="fx-right">'
-                        f'<div class="fx-prob" style="color:{tip_clr(pred["tip"])};font-weight:800">{tip_short}</div>'
+                        f'<div class="fx-prob" style="color:{tip_clr(pred["tip"])};font-weight:800">{ts}</div>'
                         f'<div class="fx-tag" style="color:{tc2};font-size:.46rem;font-weight:700">{tv}</div>'
                         '</div>'
                     )
@@ -769,16 +698,15 @@ def league_page(league_id):
 @app.route("/match/<match_id>")
 def match_page(match_id):
     try: match_id = int(match_id)
-    except: pass  # ESPN IDs like "E39_12345" stay as strings
+    except: pass
     try:
         # Find fixture card from cache
         all_cards = D.get_fixtures_window(3)
         card = next((c for c in all_cards if str(c["id"]) == str(match_id)), None)
 
-        # Full enrichment — ESPN fixtures have string IDs, skip AFL enrich
+        # Full enrichment — ESPN fixtures use string IDs, bypass AFL
         is_espn = str(match_id).startswith("E")
         if is_espn and card:
-            # Build enrichment from card + quick computed stats
             e = D.enrich_from_card(card)
         else:
             e = D.enrich(match_id, card)
@@ -818,9 +746,11 @@ def match_page(match_id):
             rec_tip,xg_h,xg_a,h_form,a_form,h_std,a_std,rec_prob,rec_odds,h_name,a_name)
 
         # TAG — intelligent multi-signal system
-        tag, tc = _smart_tag(rec_tip, rec_conv, rec_prob, hw, dw, aw,
-                             h_form, a_form, h_inj, a_inj, h_std, a_std,
-                             xg_h, xg_a, lg_name)
+        data_conf = getattr(e, "data_conf", 0.5) if not isinstance(e, dict) else 0.5
+        tag, tc = match_predictor.smart_tag(
+            rec_tip, rec_conv, rec_prob, hw, dw, aw,
+            h_form, a_form, h_inj, a_inj, h_std, a_std,
+            xg_h, xg_a, lg_name, data_conf)
 
         tag_badge = {"SURE MATCH":"bg-green","RELIABLE":"bg-green","SOLID":"bg-blue",
                      "VOLATILE":"bg-orange","AVOID":"bg-red","MONITOR":"bg-muted"}.get(tag,"bg-muted")
@@ -901,7 +831,7 @@ def match_page(match_id):
             + '<div style="font-size:.75rem;font-weight:800;color:var(--wh)">' + ("VALUE" if (edge_val or 0)>2 else "SAFE" if rec_prob>=65 else "STANDARD") + '</div>'
             + '</div></div>'
             + '<div class="tip-reason">' + reason + '</div>'
-            + _analyst_block(h_name, a_name, xg_h, xg_a, h_form, a_form,
+            + _smart_analyst(h_name, a_name, xg_h, xg_a, h_form, a_form,
                              h_std, a_std, h2h, rec_tip, rec_prob,
                              hw, dw, aw, o25, btts, h_inj, a_inj)
             + '</div>'
