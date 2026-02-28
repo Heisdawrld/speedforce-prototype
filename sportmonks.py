@@ -1,11 +1,11 @@
 """
-sportmonks.py -- Robust API Client (Fixed)
+sportmonks.py -- Fixed Token & God Mode Integration
 """
 import os, json, requests
 from datetime import datetime, timezone, timedelta
 import database
 
-# UPDATED TOKEN
+# FIXED TOKEN (Added the missing 'L' at the end)
 TOKEN = "EbRqkfYJgeCOtHzoC1AXpk1OO4semN0DtJ1P84zrYVNRCT1x4dHVsP9FGJAVL"
 BASE  = "https://api.sportmonks.com/v3/football"
 
@@ -50,6 +50,11 @@ def _get_paginated(endpoint, params=None, cache_hours=6):
     all_items = []
     page = 1
     
+    # Check cache first
+    ck = f"sm_paged_{endpoint}_{json.dumps(sorted(p.items()))}"
+    mem = _mem_get(ck, cache_hours)
+    if mem: return mem
+    
     while page <= 10: # Safety limit
         try:
             r = requests.get(f"{BASE}{endpoint}", headers={"Authorization": TOKEN}, params={**p, "page": page}, timeout=15)
@@ -65,6 +70,7 @@ def _get_paginated(endpoint, params=None, cache_hours=6):
             page += 1
         except: break
         
+    _mem_set(ck, all_items)
     return all_items
 
 # ─── CORE FETCHERS ──────────────────────────────────────────────────────────
@@ -116,6 +122,16 @@ def extract_teams(fx):
     h = next((p for p in fx.get('participants',[]) if p['meta']['location']=='home'), {})
     a = next((p for p in fx.get('participants',[]) if p['meta']['location']=='away'), {})
     return h.get('id'), h.get('name'), a.get('id'), a.get('name')
+
+def extract_state(fx):
+    state = fx.get('state') or {}
+    return state.get('short_name') or state.get('state') or "NS"
+
+def extract_score(fx):
+    scores = fx.get('scores', [])
+    h_score = next((s['score']['goals'] for s in scores if s['description']=='CURRENT' and s['score']['participant']=='home'), None)
+    a_score = next((s['score']['goals'] for s in scores if s['description']=='CURRENT' and s['score']['participant']=='away'), None)
+    return h_score, a_score
 
 def parse_odds(fx):
     # Flatten odds for easy access
