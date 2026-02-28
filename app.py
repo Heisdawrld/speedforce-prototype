@@ -62,6 +62,39 @@ LEAGUE_META = {
     "J1 League":              {"icon":"🇯🇵","country":"Japan","tier":3},
     "Chinese Super League":   {"icon":"🇨🇳","country":"China","tier":3},
     "NPFL":                   {"icon":"🇳🇬","country":"Nigeria","tier":2},
+    # Tier 2
+    "Primeira Liga":          {"icon":"🇵🇹","country":"Portugal","tier":2},
+    "Süper Lig":              {"icon":"🇹🇷","country":"Turkey","tier":2},
+    "Scottish Premiership":   {"icon":"🏴72334f","country":"Scotland","tier":2},
+    "Russian Premier League": {"icon":"🇷🇺","country":"Russia","tier":2},
+    "Ukrainian Premier League":{"icon":"🇺🇦","country":"Ukraine","tier":2},
+    "Argentine Primera":      {"icon":"🇦🇷","country":"Argentina","tier":2},
+    "Serie A (Brazil)":       {"icon":"🇧🇷","country":"Brazil","tier":2},
+    "Brasileirao Serie A":    {"icon":"🇧🇷","country":"Brazil","tier":2},
+    # Tier 3
+    "Ekstraklasa":            {"icon":"🇵🇱","country":"Poland","tier":3},
+    "Czech Liga":             {"icon":"🇨🇿","country":"Czech Rep","tier":3},
+    "Greek Super League":     {"icon":"🇬🇷","country":"Greece","tier":3},
+    "Super Liga Serbia":      {"icon":"🇷🇸","country":"Serbia","tier":3},
+    "Eliteserien":            {"icon":"🇳🇴","country":"Norway","tier":3},
+    "Allsvenskan":            {"icon":"🇸🇪","country":"Sweden","tier":3},
+    "Veikkausliiga":          {"icon":"🇫🇮","country":"Finland","tier":3},
+    "Fortuna Liga":           {"icon":"🇨🇿","country":"Slovakia","tier":3},
+    "1. HNL":                 {"icon":"🇭🇷","country":"Croatia","tier":3},
+    "Bundesliga Austria":     {"icon":"🇦🇹","country":"Austria","tier":3},
+    "J1 League":              {"icon":"🇯🇵","country":"Japan","tier":3},
+    "K League 1":             {"icon":"🇰🇷","country":"South Korea","tier":3},
+    "Chinese Super League":   {"icon":"🇨🇳","country":"China","tier":3},
+    "A-League":               {"icon":"🇦🇺","country":"Australia","tier":3},
+    "Saudi Pro League":       {"icon":"🇸🇦","country":"Saudi Arabia","tier":3},
+    "Indian Super League":    {"icon":"🇮🇳","country":"India","tier":3},
+    "Botola Pro":             {"icon":"🇲🇦","country":"Morocco","tier":3},
+    "NPSL":                   {"icon":"🇳🇬","country":"Nigeria","tier":3},
+    "Ligue Professionnelle 1":{"icon":"🇩🇿","country":"Algeria","tier":3},
+    "South African PSL":      {"icon":"🇿🇦","country":"South Africa","tier":3},
+    "Egyptian Premier League":{"icon":"🇪🇬","country":"Egypt","tier":3},
+    "Ghanaian Premier League":{"icon":"🇬🇭","country":"Ghana","tier":3},
+    "CAF Champions League":   {"icon":"🏆","country":"Africa","tier":2},
 }
 
 def get_league_meta(name):
@@ -743,350 +776,399 @@ def league_page(l_id):
 @app.route("/match/<int:match_id>")
 def match_page(match_id):
     try:
-        # Get full enrichment from Sportmonks
-        enriched = sportmonks.enrich_match(match_id)
-
-        h_name = enriched["home_name"] or "Home"
-        a_name = enriched["away_name"] or "Away"
-        h_id   = enriched["home_id"]
-        a_id   = enriched["away_id"]
-        state  = enriched["state"]
-        score_h = enriched.get("score_home")
-        score_a = enriched.get("score_away")
-
-        # Build prediction using our engine
-        preds = enriched.get("predictions") or {}
-        odds  = enriched.get("odds") or {}
-        h_form = enriched.get("home_form") or []
-        a_form = enriched.get("away_form") or []
-        xg_h   = enriched.get("xg_home")
-        xg_a   = enriched.get("xg_away")
-        h_stats = enriched.get("home_stats") or {}
-        a_stats = enriched.get("away_stats") or {}
-        referee = enriched.get("referee")
-        h2h     = enriched.get("h2h_summary")
-        h_lineup = enriched.get("home_lineup") or []
-        a_lineup = enriched.get("away_lineup") or []
-        events   = enriched.get("events") or {}
+        enriched   = sportmonks.enrich_match(match_id)
+        h_name     = enriched["home_name"] or "Home"
+        a_name     = enriched["away_name"] or "Away"
+        state      = enriched["state"]
+        score_h    = enriched.get("score_home")
+        score_a    = enriched.get("score_away")
+        preds      = enriched.get("predictions") or {}
+        odds       = enriched.get("odds") or {}
+        h_form     = enriched.get("home_form") or []
+        a_form     = enriched.get("away_form") or []
+        xg_h_raw   = enriched.get("xg_home")
+        xg_a_raw   = enriched.get("xg_away")
+        referee    = enriched.get("referee")
+        h2h        = enriched.get("h2h_summary")
+        h_lineup   = enriched.get("home_lineup") or []
+        a_lineup   = enriched.get("away_lineup") or []
+        events     = enriched.get("events") or {}
         value_bets = enriched.get("value_bets") or []
+        league_nm  = enriched.get("league_name","")
+        kickoff    = enriched.get("kickoff","")
 
-        # Run our conviction engine
-        hw  = preds.get("home_win", 33.3)
-        dw  = preds.get("draw", 33.3)
-        aw  = preds.get("away_win", 33.3)
-        o25 = preds.get("over_25", 45.0)
-        o15 = preds.get("over_15", 65.0)
-        btts = preds.get("btts", 45.0)
+        # Probabilities -- Sportmonks first, Poisson fallback
+        hw   = float(preds.get("home_win") or 0)
+        dw   = float(preds.get("draw")     or 0)
+        aw   = float(preds.get("away_win") or 0)
+        o25  = float(preds.get("over_25")  or 0)
+        o15  = float(preds.get("over_15")  or 0)
+        btts = float(preds.get("btts")     or 0)
 
-        # Use our Poisson if xG available
+        xg_h = float(xg_h_raw) if xg_h_raw else None
+        xg_a = float(xg_a_raw) if xg_a_raw else None
+
+        # Poisson from xG when Sportmonks gives no probs
         if xg_h and xg_a:
-            p_o25, p_o15, p_btts = match_predictor._goals_from_xg(
-                float(xg_h), float(xg_a))
-            # Blend Sportmonks predictions with our Poisson
-            o25  = round(o25  * 0.5 + p_o25  * 0.5, 1)
-            o15  = round(o15  * 0.5 + p_o15  * 0.5, 1)
-            btts = round(btts * 0.5 + p_btts * 0.5, 1)
+            p_o25, p_o15, p_btts = match_predictor._goals_from_xg(xg_h, xg_a)
+            if o25 == 0:  o25  = round(p_o25 * 100, 1)
+            if o15 == 0:  o15  = round(p_o15 * 100, 1)
+            if btts == 0: btts = round(p_btts * 100, 1)
+            if hw == 0:
+                hw_p = dw_p = aw_p = 0.0
+                for hg in range(10):
+                    ph = match_predictor.poisson_pmf(hg, xg_h)
+                    for ag in range(10):
+                        pa = match_predictor.poisson_pmf(ag, xg_a)
+                        j  = ph * pa
+                        if hg > ag: hw_p += j
+                        elif hg == ag: dw_p += j
+                        else: aw_p += j
+                hw = round(hw_p*100,1); dw = round(dw_p*100,1); aw = round(aw_p*100,1)
 
-        # Team profile intelligence from our tracker
+        # Absolute fallback
+        if hw==0 and dw==0 and aw==0: hw,dw,aw = 33.3,33.3,33.3
+        if o15==0: o15=65.0
+        if o25==0: o25=45.0
+        if btts==0: btts=45.0
+
+        # Renorm 1X2
+        tot = hw+dw+aw
+        if tot>0 and abs(tot-100)>2: hw=round(hw/tot*100,1); dw=round(dw/tot*100,1); aw=round(aw/tot*100,1)
+
+        o35 = round(max(o25-22,5.0),1)
+        ng  = round(max(100-btts,5.0),1)
+
+        # Team profile intelligence
         try:
-            h_profile = database.get_team_profile(h_name, "home", min_matches=5)
-            a_profile = database.get_team_profile(a_name, "away", min_matches=5)
-        except: h_profile = a_profile = None
+            h_prof = database.get_team_profile(h_name,"home",min_matches=5)
+            a_prof = database.get_team_profile(a_name,"away",min_matches=5)
+        except: h_prof = a_prof = None
+        if h_prof and h_prof.get("played",0)>=5:
+            b = min(0.3, h_prof["played"]*0.015)
+            if xg_h: xg_h = round(xg_h*(1-b)+h_prof["avg_scored"]*b,2)
+        if a_prof and a_prof.get("played",0)>=5:
+            b = min(0.3, a_prof["played"]*0.015)
+            if xg_a: xg_a = round(xg_a*(1-b)+a_prof["avg_scored"]*b,2)
 
-        if h_profile and h_profile["played"] >= 5:
-            blend = min(0.35, h_profile["played"] * 0.018)
-            if xg_h: xg_h = round(float(xg_h)*(1-blend) + h_profile["avg_scored"]*blend, 2)
-            if h_profile["played"] >= 8:
-                pb = min(0.2, h_profile["played"]*0.008)
-                hw = round(hw*(1-pb) + h_profile["win_rate"]*pb, 1)
+        # Odds
+        odds_h    = odds.get("home")
+        odds_d    = odds.get("draw")
+        odds_a    = odds.get("away")
+        odds_o15  = odds.get("over_15")
+        odds_o25  = odds.get("over_25")
+        odds_btts = odds.get("btts_yes")
 
-        if a_profile and a_profile["played"] >= 5:
-            blend = min(0.35, a_profile["played"] * 0.018)
-            if xg_a: xg_a = round(float(xg_a)*(1-blend) + a_profile["avg_scored"]*blend, 2)
-            if a_profile["played"] >= 8:
-                pb = min(0.2, a_profile["played"]*0.008)
-                aw = round(aw*(1-pb) + a_profile["win_rate"]*pb, 1)
+        # THREE-TIER TIPS
+        rec_tip,rec_prob,rec_conv,rec_odds,all_scores = match_predictor._pick_recommended(
+            hw,dw,aw,o15,o25,o35,btts,btts,ng,
+            xg_h or 1.2,xg_a or 1.0,h_form,a_form,None,None,
+            odds_h,odds_d,odds_a,odds_o15,odds_o25,odds_btts)
+        safe_tip,safe_prob,safe_odds = match_predictor._pick_safest(
+            rec_tip,hw,dw,aw,o15,xg_h or 1.2,xg_a or 1.0,h_form,a_form,
+            odds_h,odds_d,odds_a)
+        risky_list = match_predictor._pick_risky(
+            hw,dw,aw,o15,o25,btts,xg_h or 1.2,xg_a or 1.0,h_form,a_form,
+            odds_h,odds_a,odds_o25,odds_btts)
 
-        # Renormalise
-        tot = hw + dw + aw
-        if tot > 0:
-            hw = round(hw/tot*100, 1)
-            dw = round(dw/tot*100, 1)
-            aw = round(aw/tot*100, 1)
+        analyst_reason = match_predictor._reason(
+            rec_tip,xg_h or 1.2,xg_a or 1.0,h_form,a_form,None,None,
+            rec_prob,rec_odds,h_name,a_name)
 
-        # Pick best tips
-        markets = [("HOME WIN",hw),("DRAW",dw),("AWAY WIN",aw),
-                   ("OVER 2.5",o25),("GG",btts),("OVER 1.5",o15)]
-        best = max(markets, key=lambda x: x[1])
-        rec_tip, rec_prob = best
+        # TAG LOGIC
+        fav_prob = max(hw,aw)
+        inj_total = len(enriched.get("home_injuries",[]))+len(enriched.get("away_injuries",[]))
+        h_slump = list(h_form[-3:]).count("L")>=3 if len(h_form)>=3 else False
+        a_slump = list(a_form[-3:]).count("L")>=3 if len(a_form)>=3 else False
+        lg_lower = league_nm.lower()
+        is_friendly = "friendly" in lg_lower or "international" in lg_lower
+        is_derby    = h_name.split()[0][:4].lower()==a_name.split()[0][:4].lower()
+        is_cup      = any(w in lg_lower for w in ["cup","copa","coupe","pokal","carabao"])
 
-        # Conviction score
-        h_form_sc = match_predictor.form_score(h_form)
-        a_form_sc = match_predictor.form_score(a_form)
-        xgh = float(xg_h) if xg_h else 1.2
-        xga = float(xg_a) if xg_a else 1.0
-        # Pick best bookmaker odds for recommended tip
-        _tip_odds_key = ("home" if "HOME" in rec_tip else
-                         "away" if "AWAY" in rec_tip else
-                         "over_25" if "2.5" in rec_tip else
-                         "over_15" if "1.5" in rec_tip else
-                         "btts_yes" if rec_tip=="GG" else "home")
-        _bk = odds.get(_tip_odds_key)
-        conv = match_predictor.conviction_score(
-            rec_tip, rec_prob, _bk,
-            xgh, xga, h_form, a_form, None, None
-        )
-
-        # Reliability tag
-        if conv >= 68 and rec_prob >= 62:
-            tag = "RELIABLE"; tag_cls = "reliable"
-            tag_color = "var(--g)"
-        elif conv >= 52:
-            tag = "SOLID TIP"; tag_cls = "solid"
-            tag_color = "var(--b)"
+        if fav_prob>=85 and inj_total==0 and not is_cup and not is_friendly:
+            tag="SURE MATCH"; tag_cls="sure"
+        elif is_friendly or (is_derby and fav_prob<60):
+            tag="VOLATILE";   tag_cls="volatile"
+        elif (h_slump and "HOME" in rec_tip) or (a_slump and "AWAY" in rec_tip) or inj_total>=3:
+            tag="AVOID";      tag_cls="avoid"
+        elif rec_conv>=62 and rec_prob>=58:
+            tag="RELIABLE";   tag_cls="reliable"
+        elif rec_conv>=45:
+            tag="SOLID";      tag_cls="solid"
         else:
-            tag = "MONITOR"; tag_cls = "monitor"
-            tag_color = "var(--t2)"
+            tag="MONITOR";    tag_cls="monitor"
 
-        # Safest tip
-        safe_tip = "OVER 1.5" if o15 >= 60 else rec_tip
-        safe_prob = o15 if o15 >= 60 else rec_prob
+        tag_icons = {"SURE MATCH":"checkmark","RELIABLE":"shield","SOLID":"shield",
+                     "VOLATILE":"arrow.2.circlepath","AVOID":"exclamationmark.triangle","MONITOR":"eye"}
+        tag_display = {"SURE MATCH":"SURE MATCH","RELIABLE":"RELIABLE","SOLID":"SOLID TIP",
+                       "VOLATILE":"VOLATILE","AVOID":"AVOID","MONITOR":"MONITOR"}
 
-        # Build page
+        fair_odds = round(100/max(rec_prob,1),2)
+        edge_val  = None
+        if rec_odds and rec_odds>1:
+            edge_val = round((rec_prob/100-1/rec_odds)*100,1)
+
+        # Value category
+        if edge_val and edge_val>3: val_cat="VALUE"
+        elif rec_prob>=65: val_cat="SAFE"
+        else: val_cat="STANDARD"
+
         live_states = {"1H","2H","HT","ET","PEN","LIVE","INPLAY"}
         is_live = state.upper() in live_states or (isinstance(state,str) and state.isdigit())
-        is_ft   = state.upper() in ("FT","AET","PEN","FIN","FINISHED")
+        is_ft   = state.upper() in ("FT","AET","PEN","FIN","FINISHED","AWARDED")
 
-        # Match hero
-        if is_live:
-            s_html = f'<span class="s-badge s-live" style="font-size:.7rem">{live_dot()} {state}</span>'
-        elif is_ft:
-            s_html = '<span class="s-badge s-ft" style="font-size:.7rem">Full Time</span>'
-        else:
-            s_html = ""
-
-        if score_h is not None and score_a is not None:
-            vs_html = f'<div class="vs-score">{score_h}<span style="color:var(--t2);font-size:1.8rem;margin:0 2px">-</span>{score_a}</div>'
-        else:
-            vs_html = '<div class="vs-sep">VS</div>'
-
-        content = f'<a href="/" class="back">← Leagues</a>'
-        content += f'''<div class="match-hero up">
-          <div class="match-league">⚽ {enriched.get("league_name","")}</div>
-          {s_html}
-          <div class="match-teams" style="margin-top:12px">
-            <div class="team-block"><div class="team-name">{h_name}</div></div>
-            <div class="vs-block">{vs_html}</div>
-            <div class="team-block"><div class="team-name">{a_name}</div></div>
-          </div>
-        </div>'''
-
-        # Main prediction card
-        tc = tip_color(rec_tip)
-        fair_odds = round(100/max(rec_prob,1), 2)
-        bk_odds   = odds.get("home" if "HOME" in rec_tip else "away" if "AWAY" in rec_tip else "over_25" if "OVER 2.5" in rec_tip else "home")
-        edge_str  = ""
-        if bk_odds and bk_odds > 1:
-            edge = round((rec_prob/100) - (1/bk_odds), 3)
-            if edge > 0:
-                edge_str = f'<span class="badge bg-green" style="margin-top:6px">+{round(edge*100,1)}% EDGE</span>'
-
-        # Build reason text
-        reason_parts = []
-        if h_form: reason_parts.append(f"{h_name} form: {' '.join(h_form[-5:])}")
-        if a_form: reason_parts.append(f"{a_name} form: {' '.join(a_form[-5:])}")
-        if xg_h and xg_a: reason_parts.append(f"xG: {xg_h} vs {xg_a}")
-        if referee:
-            if referee.get("high_card_game"): reason_parts.append("⚠️ High-card referee")
-            if referee.get("pen_prone"): reason_parts.append("Penalty-prone official")
-        reason = " · ".join(reason_parts) if reason_parts else "Analysis based on Sportmonks data"
-
-        content += f'''<div class="pred-card {tag_cls} up d1">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start">
-            <div>
-              <div class="tip-main" style="color:{tc}">{rec_tip}</div>
-              <div class="tip-prob">{rec_prob}% probability · {conv:.0f}/100 conviction</div>
-              {edge_str}
-            </div>
-            <span class="badge {'bg-green' if tag_cls=='reliable' else 'bg-blue' if tag_cls=='solid' else 'bg-muted'}">{tag}</span>
-          </div>
-          <div class="tip-reason">{reason}</div>
-        </div>'''
-
-        # Safest + Risky tips row
-        content += f'''<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:8px" class="up d2">
-          <div class="card" style="margin:0">
-            <div class="card-title"><span class="card-title-icon">🛡️</span> Safest Tip</div>
-            <div style="font-size:1rem;font-weight:900;color:var(--b)">{safe_tip}</div>
-            <div style="font-size:.62rem;color:var(--t2);margin-top:3px">{safe_prob:.1f}% probability</div>
-          </div>
-          <div class="card" style="margin:0">
-            <div class="card-title"><span class="card-title-icon">🎯</span> Fair Odds</div>
-            <div style="font-size:1rem;font-weight:900;color:var(--gold)">{fair_odds}</div>
-            <div style="font-size:.62rem;color:var(--t2);margin-top:3px">
-              {'Bookie: '+str(bk_odds) if bk_odds else 'No odds data'}
-            </div>
-          </div>
-        </div>'''
-
-        # 1X2 Probabilities
-        content += '''<div class="card up d2">
-          <div class="card-title"><span class="card-title-icon">📊</span> Win Probabilities</div>'''
-        content += prob_bar(f"Home Win ({h_name[:14]})", hw, "green")
-        content += prob_bar("Draw", dw, "blue")
-        content += prob_bar(f"Away Win ({a_name[:14]})", aw, "orange")
-        content += '</div>'
-
-        # Goal Markets
-        content += '''<div class="card up d3">
-          <div class="card-title"><span class="card-title-icon">⚽</span> Goal Markets</div>'''
-        content += prob_bar("Over 1.5 Goals", o15, "green", "")
-        content += prob_bar("Over 2.5 Goals", o25, "blue", "")
-        content += prob_bar("Both Teams Score (GG)", btts, "cyan", "")
-        content += prob_bar("No Goal (NG)", round(100-btts,1), "orange", "")
-        if xg_h and xg_a:
-            content += f'<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--bdr);display:flex;gap:16px">'
-            content += f'<div><div style="font-size:.6rem;color:var(--t2);margin-bottom:2px">Home xG</div><div style="font-size:1.1rem;font-weight:900;color:var(--g)">{xg_h}</div></div>'
-            content += f'<div><div style="font-size:.6rem;color:var(--t2);margin-bottom:2px">Away xG</div><div style="font-size:1.1rem;font-weight:900;color:var(--b)">{xg_a}</div></div>'
-            content += '</div>'
-        content += '</div>'
-
-        # Form
-        content += f'''<div class="card up d3">
-          <div class="card-title"><span class="card-title-icon">📈</span> Recent Form</div>
-          <div class="info-row">
-            <div class="info-lbl">{h_name[:18]}</div>
-            <div class="form-row">{form_dots(h_form)}</div>
-          </div>
-          <div class="info-row">
-            <div class="info-lbl">{a_name[:18]}</div>
-            <div class="form-row">{form_dots(a_form)}</div>
-          </div>
-        </div>'''
-
-        # H2H
-        if h2h and h2h.get("total",0) > 0:
-            total_h2h = h2h["total"]
-            hw_pct = round(h2h["home_wins"]/total_h2h*100) if total_h2h else 0
-            dr_pct = round(h2h["draws"]/total_h2h*100) if total_h2h else 0
-            aw_pct = round(h2h["away_wins"]/total_h2h*100) if total_h2h else 0
-            content += f'''<div class="card up d3">
-              <div class="card-title"><span class="card-title-icon">⚔️</span> Head to Head</div>
-              <div class="h2h-bar">
-                <div class="h2h-h" style="flex:{hw_pct}"></div>
-                <div class="h2h-d" style="flex:{dr_pct}"></div>
-                <div class="h2h-a" style="flex:{aw_pct}"></div>
-              </div>
-              <div class="h2h-labels" style="margin-bottom:10px">
-                <span style="color:var(--g)">{h2h["home_wins"]}W</span>
-                <span style="color:var(--t2)">{h2h["draws"]}D</span>
-                <span style="color:var(--b)">{h2h["away_wins"]}W</span>
-              </div>
-              <div class="info-row"><div class="info-lbl">Avg Goals</div><div class="info-val">{h2h["avg_goals"]}</div></div>
-              <div class="info-row"><div class="info-lbl">Over 2.5</div><div class="info-val">{h2h["over_25_pct"]}%</div></div>
-              <div class="info-row"><div class="info-lbl">Both Score</div><div class="info-val">{h2h["btts_pct"]}%</div></div>
-            </div>'''
-
-        # Referee signal
-        if referee:
-            ref_name = referee.get("name","Unknown Referee")
-            avg_yc   = referee.get("avg_yellow", 0)
-            pen_r    = referee.get("penalty_rate", 0)
-            hot      = referee.get("high_card_game", False)
-            pen_p    = referee.get("pen_prone", False)
-            sig_cls  = "ref-hot" if hot else "ref-ok"
-            sig_txt  = "High Card Risk" if hot else "Normal Card Rate"
-            content += f'''<div class="card up d4">
-              <div class="card-title"><span class="card-title-icon">🟨</span> Referee Intelligence</div>
-              <div class="info-row"><div class="info-lbl">Official</div><div class="info-val">{ref_name}</div></div>
-              <div class="info-row"><div class="info-lbl">Avg Yellow Cards</div><div class="info-val">{avg_yc}/game</div></div>
-              <div class="info-row"><div class="info-lbl">Penalty Rate</div><div class="info-val">{pen_r} per game</div></div>
-              <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
-                <span class="ref-signal {sig_cls}">{sig_txt}</span>
-                {'<span class="ref-signal ref-hot">Pen Prone</span>' if pen_p else ''}
-              </div>
-            </div>'''
-
-        # Live match events
-        goals = (events or {}).get("goals", [])
-        cards_ev = (events or {}).get("cards", [])
-        if goals or cards_ev:
-            content += '''<div class="card up d4">
-              <div class="card-title"><span class="card-title-icon">⚡</span> Match Events</div>'''
-            for g in goals:
-                side_icon = "🏠" if g["side"]=="home" else "✈️"
-                content += f'''<div class="event-row">
-                  <div class="ev-min">{g["minute"]}'</div>
-                  <div class="ev-icon">⚽</div>
-                  <div class="ev-name">{g["player"]}</div>
-                  <div class="ev-side">{side_icon}</div>
-                </div>'''
-            for c_ev in cards_ev:
-                icon = "🟨" if c_ev["color"]=="yellow" else "🟥"
-                content += f'''<div class="event-row">
-                  <div class="ev-min">{c_ev["minute"]}'</div>
-                  <div class="ev-icon">{icon}</div>
-                  <div class="ev-name">{c_ev["player"]}</div>
-                </div>'''
-            content += '</div>'
-
-        # Lineups
-        if h_lineup or a_lineup:
-            content += f'''<div class="card up d4">
-              <div class="card-title"><span class="card-title-icon">👕</span> Lineups</div>
-              <div class="lineup-grid">
-                <div class="lineup-col">
-                  <div class="lineup-team">{h_name[:14]}</div>'''
-            for p in h_lineup[:11]:
-                content += f'<div class="lineup-player">{p["name"]}</div>'
-            content += f'''</div><div class="lineup-col">
-                  <div class="lineup-team">{a_name[:14]}</div>'''
-            for p in a_lineup[:11]:
-                content += f'<div class="lineup-player">{p["name"]}</div>'
-            content += '</div></div></div>'
-
-        # Value bets
-        if value_bets:
-            content += '''<div class="card up d4">
-              <div class="card-title"><span class="card-title-icon">💎</span> Value Bets</div>'''
-            for vb in value_bets[:3]:
-                vb_name = vb.get("name") or vb.get("market","")
-                vb_odds = vb.get("odds") or vb.get("value","")
-                vb_prob = vb.get("probability") or vb.get("percentage","")
-                content += f'''<div class="vbet">
-                  <div class="vbet-label">{vb_name}</div>
-                  <div class="vbet-val">{vb_odds}</div>
-                  <div class="vbet-sub">Model probability: {vb_prob}%</div>
-                </div>'''
-            content += '</div>'
-
-        # Log prediction
+        # Log
         try:
             database.log_prediction(
                 match_id=match_id, league_id=enriched.get("league_id",0),
-                league_name=enriched.get("league_name",""),
-                home_team=h_name, away_team=a_name,
-                match_date=enriched.get("kickoff",""),
-                market=rec_tip, probability=rec_prob,
-                fair_odds=fair_odds, bookie_odds=bk_odds,
-                edge=None, confidence=conv,
-                xg_home=xg_h, xg_away=xg_a,
-                likely_score="", tag=tag, reliability_score=conv
-            )
+                league_name=league_nm, home_team=h_name, away_team=a_name,
+                match_date=kickoff[:16], market=rec_tip, probability=rec_prob,
+                fair_odds=fair_odds, bookie_odds=rec_odds, edge=edge_val,
+                confidence=rec_conv, xg_home=xg_h, xg_away=xg_a,
+                likely_score="", tag=tag, reliability_score=rec_conv)
         except: pass
+
+        # Page build
+        if is_live:
+            s_html = '<span class="s-badge s-live">' + live_dot() + " " + state + "</span>"
+        elif is_ft:
+            s_html = '<span class="s-badge s-ft">Full Time</span>'
+        else:
+            s_html = '<span class="s-badge s-ns">' + kickoff_label(kickoff) + "</span>"
+
+        if score_h is not None and score_a is not None:
+            vs_html = '<div class="vs-score">' + str(score_h) + '<span style="color:var(--t2);font-size:1.6rem;margin:0 3px">-</span>' + str(score_a) + "</div>"
+        else:
+            vs_html = '<div class="vs-sep">VS</div>'
+
+        tc       = tip_color(rec_tip)
+        safe_tc  = tip_color(safe_tip)
+        conv_clr = "var(--g)" if rec_conv>=62 else "var(--w)" if rec_conv>=45 else "var(--r)"
+
+        tag_badge_map = {
+            "SURE MATCH":"bg-green","RELIABLE":"bg-green","SOLID":"bg-blue",
+            "VOLATILE":"bg-orange","AVOID":"bg-red","MONITOR":"bg-muted"
+        }
+        tag_badge_cls = tag_badge_map.get(tag,"bg-muted")
+        tag_label = tag_display.get(tag, tag)
+
+        edge_badge = ""
+        if edge_val and edge_val>0:
+            edge_badge = '<span class="badge bg-green" style="margin-top:5px">+' + str(edge_val) + '% EDGE</span>'
+        elif edge_val and edge_val<-3:
+            edge_badge = '<span class="badge bg-red" style="margin-top:5px">POOR VALUE</span>'
+
+        bk_str = (' Bookie: <span style="color:var(--gold);font-weight:800">' + str(rec_odds) + "</span>") if rec_odds else ""
+
+        content = '<a href="/" class="back">← Leagues</a>'
+
+        content += ('<div class="match-hero up">'
+            + '<div class="match-league">' + league_nm + '</div>'
+            + '<div style="margin:6px 0">' + s_html + '</div>'
+            + '<div class="match-teams">'
+            + '<div class="team-block"><div class="team-name">' + h_name + '</div></div>'
+            + '<div class="vs-block">' + vs_html + '</div>'
+            + '<div class="team-block"><div class="team-name">' + a_name + '</div></div>'
+            + '</div></div>')
+
+        # RECOMMENDED
+        content += ('<div class="pred-card ' + tag_cls + ' up d1">'
+            + '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">'
+            + '<div>'
+            + '<div style="font-size:.52rem;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:var(--t2);margin-bottom:5px">RECOMMENDED TIP</div>'
+            + '<div class="tip-main" style="color:' + tc + '">' + rec_tip + '</div>'
+            + '<div class="tip-prob">' + str(rec_prob) + '% probability &middot; Fair odds: <span style="color:var(--gold)">' + str(fair_odds) + '</span>' + bk_str + '</div>'
+            + edge_badge
+            + '</div>'
+            + '<span class="badge ' + tag_badge_cls + '" style="white-space:nowrap;flex-shrink:0">' + tag_label + '</span>'
+            + '</div>'
+            + '<div style="display:flex;gap:8px;margin-bottom:10px">'
+            + '<div style="flex:1;background:rgba(0,0,0,.2);border-radius:8px;padding:8px 10px">'
+            + '<div style="font-size:.52rem;color:var(--t2);margin-bottom:2px;letter-spacing:1px;text-transform:uppercase">Conviction</div>'
+            + '<div style="font-size:1rem;font-weight:900;color:' + conv_clr + '">' + str(round(rec_conv)) + '<span style="font-size:.6rem;color:var(--t2)">/100</span></div>'
+            + '</div>'
+            + '<div style="flex:1;background:rgba(0,0,0,.2);border-radius:8px;padding:8px 10px">'
+            + '<div style="font-size:.52rem;color:var(--t2);margin-bottom:2px;letter-spacing:1px;text-transform:uppercase">Signal</div>'
+            + '<div style="font-size:.75rem;font-weight:800;color:var(--wh)">' + val_cat + '</div>'
+            + '</div>'
+            + '</div>'
+            + '<div class="tip-reason">' + analyst_reason + '</div>'
+            + '</div>')
+
+        # SAFE + RISKY side by side
+        safe_odds_str = ('<div style="font-size:.62rem;color:var(--gold);margin-top:3px">Fair: '
+                         + str(round(100/max(safe_prob,1),2)) + '</div>') if safe_prob else ""
+        r1 = risky_list[0] if risky_list else {"tip":"--","prob":0,"odds":"--"}
+        r1_tc = tip_color(r1["tip"])
+
+        content += ('<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:8px" class="up d2">'
+            + '<div class="card" style="margin:0;border-color:rgba(79,142,247,.25);background:linear-gradient(135deg,rgba(79,142,247,.07),transparent)">'
+            + '<div class="card-title">SAFEST TIP</div>'
+            + '<div style="font-size:.9rem;font-weight:900;color:' + safe_tc + ';line-height:1.2">' + safe_tip + '</div>'
+            + '<div style="font-size:.62rem;color:var(--t2);margin-top:3px">' + str(safe_prob) + '% probability</div>'
+            + safe_odds_str
+            + '</div>'
+            + '<div class="card" style="margin:0;border-color:rgba(191,90,242,.25);background:linear-gradient(135deg,rgba(191,90,242,.07),transparent)">'
+            + '<div class="card-title">RISKY PICK</div>'
+            + '<div style="font-size:.9rem;font-weight:900;color:' + r1_tc + ';line-height:1.2">' + r1["tip"] + '</div>'
+            + '<div style="font-size:.62rem;color:var(--t2);margin-top:3px">' + str(r1["prob"]) + '% &middot; ~' + str(r1["odds"]) + '</div>'
+            + '</div></div>')
+
+        # More risky
+        if len(risky_list)>1:
+            content += '<div class="card up d2"><div class="card-title">More Risky Markets</div>'
+            for r in risky_list[1:]:
+                rtc = tip_color(r["tip"])
+                content += ('<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--bdr)">'
+                    + '<div style="font-size:.72rem;font-weight:700;color:' + rtc + '">' + r["tip"] + '</div>'
+                    + '<div style="text-align:right">'
+                    + '<div style="font-size:.65rem;color:var(--t2)">' + str(r["prob"]) + '%</div>'
+                    + '<div style="font-size:.62rem;color:var(--gold)">~' + str(r["odds"]) + '</div>'
+                    + '</div></div>')
+            content += '</div>'
+
+        # WIN PROBABILITIES
+        content += '<div class="card up d2"><div class="card-title">Win Probabilities</div>'
+        content += prob_bar("Home Win - " + h_name[:16], hw, "green")
+        content += prob_bar("Draw", dw, "blue")
+        content += prob_bar("Away Win - " + a_name[:16], aw, "orange")
+        if odds_h or odds_d or odds_a:
+            content += ('<div style="display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--bdr)">'
+                + '<div style="flex:1;text-align:center"><div style="font-size:.5rem;color:var(--t2);margin-bottom:2px">HOME</div>'
+                + '<div style="font-size:.9rem;font-weight:900;color:var(--g)">' + str(odds_h or "--") + '</div></div>'
+                + '<div style="flex:1;text-align:center"><div style="font-size:.5rem;color:var(--t2);margin-bottom:2px">DRAW</div>'
+                + '<div style="font-size:.9rem;font-weight:900;color:var(--b)">' + str(odds_d or "--") + '</div></div>'
+                + '<div style="flex:1;text-align:center"><div style="font-size:.5rem;color:var(--t2);margin-bottom:2px">AWAY</div>'
+                + '<div style="font-size:.9rem;font-weight:900;color:var(--w)">' + str(odds_a or "--") + '</div></div>'
+                + '</div>')
+        content += '</div>'
+
+        # GOAL MARKETS
+        content += '<div class="card up d3"><div class="card-title">Goal Markets</div>'
+        content += prob_bar("Over 1.5 Goals", o15, "green")
+        content += prob_bar("Over 2.5 Goals", o25, "blue")
+        content += prob_bar("Both Teams Score (GG)", btts, "cyan")
+        content += prob_bar("Under 2.5 Goals", round(100-o25,1), "orange")
+        if xg_h and xg_a:
+            content += ('<div style="display:flex;gap:16px;margin-top:10px;padding-top:10px;border-top:1px solid var(--bdr)">'
+                + '<div><div style="font-size:.5rem;color:var(--t2);text-transform:uppercase;letter-spacing:1.5px">Home xG</div>'
+                + '<div style="font-size:1.2rem;font-weight:900;color:var(--g)">' + str(xg_h) + '</div></div>'
+                + '<div><div style="font-size:.5rem;color:var(--t2);text-transform:uppercase;letter-spacing:1.5px">Away xG</div>'
+                + '<div style="font-size:1.2rem;font-weight:900;color:var(--b)">' + str(xg_a) + '</div></div>'
+                + '<div><div style="font-size:.5rem;color:var(--t2);text-transform:uppercase;letter-spacing:1.5px">Total xG</div>'
+                + '<div style="font-size:1.2rem;font-weight:900;color:var(--wh)">' + str(round(xg_h+xg_a,2)) + '</div></div>'
+                + '</div>')
+        if odds_o15 or odds_o25 or odds_btts:
+            content += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">'
+            if odds_o15:  content += '<div style="background:var(--s3);border-radius:8px;padding:6px 10px;font-size:.65rem"><div style="color:var(--t2)">O1.5</div><div style="font-weight:800;color:var(--g)">' + str(odds_o15) + '</div></div>'
+            if odds_o25:  content += '<div style="background:var(--s3);border-radius:8px;padding:6px 10px;font-size:.65rem"><div style="color:var(--t2)">O2.5</div><div style="font-weight:800;color:var(--b)">' + str(odds_o25) + '</div></div>'
+            if odds_btts: content += '<div style="background:var(--s3);border-radius:8px;padding:6px 10px;font-size:.65rem"><div style="color:var(--t2)">GG</div><div style="font-weight:800;color:var(--cy)">' + str(odds_btts) + '</div></div>'
+            content += '</div>'
+        content += '</div>'
+
+        # FORM
+        h_trend = match_predictor.form_trend(h_form)
+        a_trend = match_predictor.form_trend(a_form)
+        h_form_pts = sum(3 if r=="W" else 1 if r=="D" else 0 for r in h_form[-5:]) if h_form else 0
+        a_form_pts = sum(3 if r=="W" else 1 if r=="D" else 0 for r in a_form[-5:]) if a_form else 0
+        trend_clr = lambda t: "var(--g)" if t=="RISING" else "var(--r)" if t=="FALLING" else "var(--t2)"
+        content += ('<div class="card up d3"><div class="card-title">Recent Form</div>'
+            + '<div class="info-row">'
+            + '<div><div class="info-lbl">' + h_name[:20] + '</div>'
+            + '<div style="font-size:.58rem;color:' + trend_clr(h_trend) + ';margin-top:2px">' + h_trend + ' - ' + str(h_form_pts) + 'pts</div></div>'
+            + '<div class="form-row">' + form_dots(h_form) + '</div></div>'
+            + '<div class="info-row">'
+            + '<div><div class="info-lbl">' + a_name[:20] + '</div>'
+            + '<div style="font-size:.58rem;color:' + trend_clr(a_trend) + ';margin-top:2px">' + a_trend + ' - ' + str(a_form_pts) + 'pts</div></div>'
+            + '<div class="form-row">' + form_dots(a_form) + '</div></div>'
+            + '</div>')
+
+        # H2H
+        if h2h and h2h.get("total",0)>0:
+            tot_h2h = h2h["total"]
+            hw_p = round(h2h["home_wins"]/tot_h2h*100) if tot_h2h else 0
+            dr_p = round(h2h["draws"]/tot_h2h*100) if tot_h2h else 0
+            aw_p = round(h2h["away_wins"]/tot_h2h*100) if tot_h2h else 0
+            content += ('<div class="card up d3"><div class="card-title">Head to Head - Last ' + str(tot_h2h) + '</div>'
+                + '<div class="h2h-bar"><div class="h2h-h" style="flex:' + str(max(hw_p,1)) + '"></div>'
+                + '<div class="h2h-d" style="flex:' + str(max(dr_p,1)) + '"></div>'
+                + '<div class="h2h-a" style="flex:' + str(max(aw_p,1)) + '"></div></div>'
+                + '<div class="h2h-labels" style="margin-bottom:12px">'
+                + '<span style="color:var(--g)">' + str(h2h["home_wins"]) + 'W (' + str(hw_p) + '%)</span>'
+                + '<span style="color:var(--t2)">' + str(h2h["draws"]) + 'D</span>'
+                + '<span style="color:var(--b)">' + str(h2h["away_wins"]) + 'W (' + str(aw_p) + '%)</span></div>'
+                + '<div class="info-row"><div class="info-lbl">Avg Goals/Game</div><div class="info-val">' + str(h2h["avg_goals"]) + '</div></div>'
+                + '<div class="info-row"><div class="info-lbl">Over 2.5 Rate</div><div class="info-val">' + str(h2h["over_25_pct"]) + '%</div></div>'
+                + '<div class="info-row"><div class="info-lbl">Both Score Rate</div><div class="info-val">' + str(h2h["btts_pct"]) + '%</div></div>'
+                + '</div>')
+
+        # REFEREE
+        if referee:
+            ref_name = referee.get("name","Unknown")
+            avg_yc   = referee.get("avg_yellow",0)
+            pen_r    = referee.get("penalty_rate",0)
+            hot      = referee.get("high_card_game",False)
+            pen_p    = referee.get("pen_prone",False)
+            yc_clr   = "var(--r)" if hot else "var(--g)"
+            pen_clr  = "var(--pu)" if pen_p else "var(--t3)"
+            sig_cls  = "ref-hot" if hot else "ref-ok"
+            sig_txt  = "High Card Risk" if hot else "Fair Official"
+            note_str = ('<div class="tip-reason" style="margin-top:8px">This referee averages ' + str(avg_yc) + ' yellows/game - factor into booking markets.</div>') if hot else ""
+            content += ('<div class="card up d4"><div class="card-title">Referee Intelligence</div>'
+                + '<div class="info-row"><div class="info-lbl">Official</div><div class="info-val">' + ref_name + '</div></div>'
+                + '<div class="info-row"><div class="info-lbl">Avg Yellow Cards</div><div class="info-val" style="color:' + yc_clr + '">' + str(avg_yc) + '/game</div></div>'
+                + '<div class="info-row"><div class="info-lbl">Penalty Rate</div><div class="info-val" style="color:' + pen_clr + '">' + str(pen_r) + ' per game</div></div>'
+                + '<div style="margin-top:8px;display:flex;gap:6px">'
+                + '<span class="ref-signal ' + sig_cls + '">' + sig_txt + '</span>'
+                + ('<span class="ref-signal ref-hot">Pen Prone</span>' if pen_p else "")
+                + '</div>' + note_str + '</div>')
+
+        # EVENTS
+        goals   = events.get("goals",[])
+        cards_e = events.get("cards",[])
+        if goals or cards_e:
+            content += '<div class="card up d4"><div class="card-title">Match Events</div>'
+            for g in goals:
+                side_i = "Home" if g["side"]=="home" else "Away"
+                content += ('<div class="event-row"><div class="ev-min">' + str(g["minute"]) + "'</div>"
+                    + '<div class="ev-icon">Goal</div><div class="ev-name">' + g["player"] + '</div>'
+                    + '<div class="ev-side">' + side_i + '</div></div>')
+            for c_ev in cards_e:
+                col = "Yellow" if c_ev["color"]=="yellow" else "Red"
+                content += ('<div class="event-row"><div class="ev-min">' + str(c_ev["minute"]) + "'</div>"
+                    + '<div class="ev-icon">' + col + '</div><div class="ev-name">' + c_ev["player"] + '</div></div>')
+            content += '</div>'
+
+        # LINEUPS
+        if h_lineup or a_lineup:
+            content += ('<div class="card up d4"><div class="card-title">Lineups</div>'
+                + '<div class="lineup-grid"><div>'
+                + '<div class="lineup-team">' + h_name[:16] + '</div>')
+            for p in h_lineup[:11]:
+                content += '<div class="lineup-player">' + p["name"] + '</div>'
+            content += ('<br></div><div><div class="lineup-team">' + a_name[:16] + '</div>')
+            for p in a_lineup[:11]:
+                content += '<div class="lineup-player">' + p["name"] + '</div>'
+            content += '</div></div></div>'
+
+        # VALUE BETS
+        if value_bets:
+            content += '<div class="card up d4"><div class="card-title">Value Bets (Sportmonks)</div>'
+            for vb in value_bets[:3]:
+                content += ('<div class="vbet">'
+                    + '<div class="vbet-label">' + str(vb.get("name") or vb.get("market","")) + '</div>'
+                    + '<div class="vbet-val">' + str(vb.get("odds") or vb.get("value","")) + '</div>'
+                    + '<div class="vbet-sub">Model prob: ' + str(vb.get("probability") or vb.get("percentage","")) + '%</div>'
+                    + '</div>')
+            content += '</div>'
 
         return render_template_string(LAYOUT, content=content, page="match")
 
     except Exception as e:
-        print(f"[match_page] {match_id}: {e}")
         import traceback; traceback.print_exc()
         return render_template_string(LAYOUT,
-            content=f'<a href="/" class="back">← Back</a><div class="empty"><span class="empty-icon">⚠️</span>Could not load match.<br><small>{str(e)[:100]}</small></div>',
+            content='<a href="/" class="back">Back</a><div class="empty"><span class="empty-icon">Error</span>Could not load match.<br><small style="color:var(--r)">' + str(e)[:120] + '</small></div>',
             page="match")
-
-# ─────────────────────────────────────────────────────────────
-# LIVE PAGE
-# ─────────────────────────────────────────────────────────────
 
 @app.route("/live")
 def live_page():
@@ -1137,11 +1219,11 @@ def acca_page():
     ns_cards = [c for c in cards if c["is_ns"]]
 
     acca_picks = []
-    for c in ns_cards[:30]:  # Limit to save API calls
+    for c in ns_cards[:50]:
         preds_raw = sportmonks.get_predictions(c["id"])
         preds = sportmonks.parse_predictions(preds_raw) if preds_raw else None
         tip, prob, tag = quick_predict(c, preds)
-        if tag == "RELIABLE" and prob >= 65:
+        if tag in ("RELIABLE","SOLID") and prob >= 55:
             odds_raw = sportmonks.get_odds(c["id"])
             odds_parsed = sportmonks.parse_odds(odds_raw)
             bk_odds = odds_parsed.get(
