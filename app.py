@@ -350,6 +350,10 @@ def form_dots(form_list):
         html += f'<div class="fd {cls}">{r}</div>'
     return html + '</div>'
 
+def tip_clr(tip):
+    """Short alias used in league fixture rows."""
+    return tip_color(tip)
+
 def tip_color(tip):
     if not tip: return "var(--wh)"
     t = tip.upper()
@@ -359,6 +363,134 @@ def tip_color(tip):
     if "OVER" in t or "GG" in t or "BTTS" in t: return "var(--cy)"
     if "UNDER" in t or "NG" in t: return "var(--t3)"
     return "var(--wh)"
+
+def _predicted_score(xg_h, xg_a):
+    """Most likely scoreline from Poisson distribution."""
+    import math
+    def pmf(k, l): return (l**k) * math.exp(-l) / math.factorial(k) if l > 0 else (1.0 if k==0 else 0.0)
+    best_prob = 0; best_h = 0; best_a = 0
+    for hg in range(7):
+        for ag in range(7):
+            p = pmf(hg, xg_h) * pmf(ag, xg_a)
+            if p > best_prob:
+                best_prob = p; best_h = hg; best_a = ag
+    return best_h, best_a, round(best_prob * 100, 1)
+
+def _form_str(form):
+    if not form: return "No data"
+    return " ".join(list(form)[-6:])
+
+def _analyst_block(h_name, a_name, xg_h, xg_a, h_form, a_form,
+                   h_std, a_std, h2h, tip, prob, hw, dw, aw,
+                   o25, btts, h_inj, a_inj):
+    """Rich analyst narrative block — shown below the reason on match page."""
+    sc_h, sc_a, sc_prob = _predicted_score(xg_h, xg_a)
+    total_xg = round(xg_h + xg_a, 2)
+
+    # Predicted score chip
+    score_chip = (
+        '<div style="margin-top:12px;padding:12px;background:rgba(0,255,135,.06);'
+        'border:1px solid rgba(0,255,135,.15);border-radius:10px">'
+        '<div style="font-size:.45rem;font-weight:700;letter-spacing:2px;'
+        'color:var(--t3);text-transform:uppercase;margin-bottom:6px">⚽ Predicted Score</div>'
+        '<div style="display:flex;align-items:center;justify-content:space-between">'
+        '<div style="text-align:center">'
+        '<div style="font-size:.72rem;font-weight:700;color:var(--wh)">' + h_name[:16] + '</div>'
+        '<div style="font-size:2rem;font-weight:900;color:var(--g)">' + str(sc_h) + '</div>'
+        '</div>'
+        '<div style="text-align:center">'
+        '<div style="font-size:.55rem;color:var(--t3)">Most likely</div>'
+        '<div style="font-size:.52rem;color:var(--t2);margin-top:2px">' + str(sc_prob) + '% chance</div>'
+        '</div>'
+        '<div style="text-align:center">'
+        '<div style="font-size:.72rem;font-weight:700;color:var(--wh)">' + a_name[:16] + '</div>'
+        '<div style="font-size:2rem;font-weight:900;color:var(--b)">' + str(sc_a) + '</div>'
+        '</div>'
+        '</div></div>'
+    )
+
+    # Key factors
+    factors = []
+    # xG factor
+    if xg_h > xg_a * 1.3:
+        factors.append(f"📊 <b>{h_name.split()[0]}</b> dominating chance creation — {xg_h} xG vs {xg_a} xG")
+    elif xg_a > xg_h * 1.3:
+        factors.append(f"📊 <b>{a_name.split()[0]}</b> creating more chances away — {xg_a} xG vs {xg_h} xG")
+    else:
+        factors.append(f"📊 Balanced chance creation — {xg_h} vs {xg_a} xG, total {total_xg}")
+
+    # Form factor
+    h_fs = sum(3 if r.upper()=="W" else 1 if r.upper()=="D" else 0 for r in (h_form or [])[-5:])
+    a_fs = sum(3 if r.upper()=="W" else 1 if r.upper()=="D" else 0 for r in (a_form or [])[-5:])
+    if h_fs > a_fs + 4:
+        factors.append(f"📈 Home form significantly stronger ({h_fs}/15 pts vs {a_fs}/15)")
+    elif a_fs > h_fs + 4:
+        factors.append(f"📈 Away side in superior form ({a_fs}/15 pts vs {h_fs}/15)")
+    else:
+        factors.append(f"📈 Form fairly even — Home {h_fs}/15 pts, Away {a_fs}/15 pts")
+
+    # Standings
+    if h_std and a_std:
+        if h_std < a_std - 5:
+            factors.append(f"🏆 League position strongly favours home side (#{h_std} vs #{a_std})")
+        elif a_std < h_std - 5:
+            factors.append(f"🏆 Away team superior in the table (#{a_std} vs #{h_std})")
+        else:
+            factors.append(f"🏆 Closely matched table positions — #{h_std} vs #{a_std}")
+
+    # H2H
+    if h2h and h2h.get("total", 0) >= 3:
+        tot = h2h["total"]
+        hw_h = h2h.get("home_wins", 0); aw_h = h2h.get("away_wins", 0); dr_h = h2h.get("draws", 0)
+        factors.append(f"🔁 H2H last {tot}: {hw_h}W {dr_h}D {aw_h}L for home side · Avg {h2h.get('avg_goals','?')} goals/game")
+
+    # Goals context
+    if o25 >= 65:
+        factors.append(f"⚽ High-scoring game likely — Over 2.5 at {o25}% · Both teams creating freely")
+    elif o25 <= 38:
+        factors.append(f"🔒 Defensive encounter expected — Under 2.5 favoured ({round(100-o25,1)}%)")
+    if btts >= 62:
+        factors.append(f"🎯 Both teams score probability: {btts}% — open game expected")
+
+    # Injuries
+    total_inj = len(h_inj or []) + len(a_inj or [])
+    if total_inj > 0:
+        inj_txt = []
+        if h_inj: inj_txt.append(f"{len(h_inj)} home absentee(s)")
+        if a_inj: inj_txt.append(f"{len(a_inj)} away absentee(s)")
+        factors.append(f"🚑 Injury concern: {' · '.join(inj_txt)} — factor in team strength")
+
+    # Upset risk
+    upset = ""
+    leading = max(hw, aw)
+    if leading < 50:
+        upset = "⚠️ <b>High upset risk</b> — No clear favourite, anything can happen"
+    elif leading < 60 and dw >= 27:
+        upset = "⚠️ <b>Moderate upset risk</b> — Draw very much in play at " + str(round(dw,1)) + "%"
+    elif leading >= 75:
+        upset = "✅ <b>Low upset risk</b> — Dominant favourite, form and xG aligned"
+
+    factors_html = "".join(
+        f'<div style="font-size:.68rem;color:var(--t3);padding:5px 0;border-bottom:1px solid var(--bdr);line-height:1.5">{f}</div>'
+        for f in factors
+    )
+
+    upset_html = (
+        '<div style="margin-top:8px;padding:8px 10px;background:rgba(255,159,10,.06);'
+        'border-left:2px solid var(--w);border-radius:4px;font-size:.67rem;color:var(--t3)">'
+        + upset + '</div>'
+    ) if upset else ""
+
+    return (
+        score_chip
+        + '<div style="margin-top:12px;padding:12px;background:rgba(255,255,255,.02);'
+        'border-radius:10px;border:1px solid var(--bdr)">'
+        '<div style="font-size:.45rem;font-weight:700;letter-spacing:2px;color:var(--t3);'
+        'text-transform:uppercase;margin-bottom:8px">🧠 Analyst Intelligence</div>'
+        + factors_html
+        + upset_html
+        + '</div>'
+    )
 
 def get_quick_pred(fixture_card):
     """Quick prediction from form+xG for fixture list display. No extra API calls."""
@@ -541,7 +673,24 @@ def league_page(league_id):
                 sa = c["score_a"] if c["score_a"] is not None else "-"
                 right_html = f'<div class="fx-right"><div class="fx-score">{sh} - {sa}</div></div>'
             else:
-                right_html = '<div class="fx-right"><div class="fx-prob">--</div><div class="fx-tag" style="color:var(--t3)">TAP</div></div>'
+                # Quick prediction for NS fixtures
+                try:
+                    pred = get_quick_pred(c)
+                    tip_short = pred['tip'].replace(' WIN','').replace('OVER ','O').replace('GOALS','').strip()
+                    tag_val = pred['tag']
+                    tag_clr = ('var(--g)' if tag_val in ('RELIABLE','SURE MATCH')
+                               else 'var(--r)' if tag_val=='AVOID'
+                               else 'var(--w)' if tag_val=='VOLATILE'
+                               else 'var(--b)' if tag_val=='SOLID'
+                               else 'var(--t2)')
+                    right_html = (
+                        '<div class="fx-right">'
+                        '<div class="fx-prob" style="color:' + tip_clr(pred["tip"]) + '">' + tip_short + '</div>'
+                        '<div class="fx-tag" style="color:' + tag_clr + ';font-size:.48rem">' + tag_val + '</div>'
+                        '</div>'
+                    )
+                except:
+                    right_html = '<div class="fx-right"><div class="fx-prob" style="color:var(--t3)">--</div><div class="fx-tag" style="color:var(--t3)">--</div></div>'
 
             content += (
                 f'<a href="/match/{fid}" class="fx-row">'
@@ -700,6 +849,11 @@ def match_page(match_id):
             + '<div style="font-size:.75rem;font-weight:800;color:var(--wh)">' + ("VALUE" if (edge_val or 0)>2 else "SAFE" if rec_prob>=65 else "STANDARD") + '</div>'
             + '</div></div>'
             + '<div class="tip-reason">' + reason + '</div>'
+
+            # ── ANALYST DEEP-DIVE ──────────────────────────────────────────
+            + _analyst_block(h_name, a_name, xg_h, xg_a, h_form, a_form,
+                             h_std, a_std, h2h, rec_tip, rec_prob,
+                             hw, dw, aw, o25, btts, h_inj, a_inj)
             + '</div>'
         )
 
@@ -1053,43 +1207,6 @@ def settle():
         return jsonify(result)
     except Exception as e:
         return jsonify({"status":"error","error":str(e)})
-
-
-@app.route("/api/debug")
-def debug():
-    import traceback
-    out = {"status": "ok", "checks": {}}
-    # Test API-Football
-    try:
-        from datetime import datetime, timezone, timedelta
-        today = (datetime.now(timezone.utc)+timedelta(hours=1)).strftime("%Y-%m-%d")
-        raw = D._afl("/fixtures", {"date": today, "timezone": "Africa/Lagos"}, ch=0)
-        out["checks"]["api_football"] = {
-            "ok": raw is not None,
-            "count": len(raw) if raw else 0,
-            "date_tested": today,
-            "sample_league_ids": list(set(r.get("league",{}).get("id") for r in (raw or [])[:20]))[:10]
-        }
-    except Exception as e:
-        out["checks"]["api_football"] = {"ok": False, "error": str(e)}
-    # Test football-data.org
-    try:
-        fd = D._fd("/competitions/PL/matches", {"dateFrom": today, "dateTo": today}, ch=0)
-        out["checks"]["football_data"] = {"ok": fd is not None, "matches": len((fd or {}).get("matches",[]))}
-    except Exception as e:
-        out["checks"]["football_data"] = {"ok": False, "error": str(e)}
-    # Test get_fixtures_window
-    try:
-        cards = D.get_fixtures_window(3)
-        out["checks"]["fixtures_window"] = {"ok": True, "count": len(cards)}
-        if cards:
-            out["checks"]["fixtures_window"]["sample"] = [
-                {"home": c["home"], "away": c["away"], "league": c["league"], "date": c["date_label"]}
-                for c in cards[:3]
-            ]
-    except Exception as e:
-        out["checks"]["fixtures_window"] = {"ok": False, "error": str(e), "trace": traceback.format_exc()[-500:]}
-    return jsonify(out)
 
 
 @app.route("/api/morning")
