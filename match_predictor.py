@@ -1,239 +1,235 @@
-"""
-match_predictor.py -- ProPredictor Intelligence Engine v5 (Patched)
-
-UPGRADES:
-1. Dynamic Badging (Volatile, Versatile, Bunker)
-2. Variance/Chaos Detection (Stops forcing tips on bad matches)
-3. Proper xG Ingestion (Fixes the "Over 2.5" spam)
-"""
-
 import math
 import statistics
 
-# -- Poisson -------------------------------------------------------------------
+# ─── MATH HELPERS ─────────────────────────────────────────────────────────────
+
 def poisson_pmf(k, lam):
     if lam <= 0: return 1.0 if k == 0 else 0.0
     return (lam ** k) * math.exp(-lam) / math.factorial(k)
 
-# -- Volatility & Form Logic ---------------------------------------------------
-FORM_VALUE = {"W": 3.0, "D": 1.0, "L": 0.0}
-
-def calculate_volatility(form_list):
+def calculate_volatility(form_str):
     """
-    Returns a 'Chaos Score' (0.0 to 1.0).
-    High volatility (0.8+) means the team is inconsistent (e.g., W-L-W-L-W).
-    Low volatility means consistent performance (W-W-W or L-L-L).
+    Returns 0.0 (Stable) to 1.0 (Chaos).
+    Input: "WLDWL"
     """
-    if not form_list or len(form_list) < 3: return 0.5
+    if not form_str or len(form_str) < 3: return 0.5
+    # Map results to points: W=3, D=1, L=0
+    points = [3 if c.upper() == 'W' else 1 if c.upper() == 'D' else 0 for c in form_str]
+    if len(points) < 2: return 0.0
     
-    # Convert W/D/L to points
-    points = [FORM_VALUE.get(r.upper(), 1.0) for r in form_list]
+    # Standard Deviation implies inconsistency
+    dev = statistics.stdev(points)
+    # Max dev for [0,3] range is ~1.5. Normalize to 0-1.
+    return min(dev / 1.5, 1.0)
+
+def get_form_score(form_str):
+    if not form_str: return 0.5
+    # Weighted recent form (most recent game counts more)
+    points = [3 if c.upper() == 'W' else 1 if c.upper() == 'D' else 0 for c in form_str]
+    weights = [1.0, 1.2, 1.4, 1.6, 1.8][-len(points):]
     
-    # Calculate standard deviation of their performance
-    if len(points) > 1:
-        std_dev = statistics.stdev(points)
-        # Max std_dev for (0, 3) range is approx 1.5. Normalize to 0-1.
-        volatility = min(std_dev / 1.5, 1.0)
-        return volatility
-    return 0.0
-
-def form_score(form_list):
-    # Standard weighted form (recent games matter more)
-    if not form_list: return 0.5
-    results = [r.upper() for r in list(form_list)[-5:]]
-    weights = [1.0, 1.2, 1.4, 1.6, 1.8][-len(results):]
-    vals    = [1.0 if r=='W' else 0.4 if r=='D' else 0.0 for r in results]
-    score   = sum(v * w for v, w in zip(vals, weights))
-    return round(score / sum(weights), 3)
-
-# -- Core Signals -------------------------------------------------------------
-def _xg_signal(tip, h_xg, a_xg):
-    total = max(h_xg + a_xg, 0.1)
-    h_share = h_xg / total
+    weighted_sum = sum(p * w for p, w in zip(points, weights))
+    max_sum = sum(3 * w for w in weights)
     
-    if tip == "HOME WIN": return h_share
-    if tip == "AWAY WIN": return (1.0 - h_share)
-    if tip == "DRAW":     return 1.0 - (abs(h_share - 0.5) * 2) # High if share is 0.5
-    
-    # Goals Mapping
-    if tip == "OVER 2.5":
-        # 2.5 Goals usually needs ~2.7+ combined xG to be 'safe'
-        return min(total / 2.7, 1.0)
-    if tip == "UNDER 2.5":
-        # Safe under needs < 2.0 combined xG
-        return max(0.0, 1.0 - (total / 2.0))
-    if tip == "GG":
-        # Both need to contribute. If one is 0.1, GG is unlikely.
-        balanced = min(h_xg, a_xg) / max(h_xg, a_xg) if max(h_xg,a_xg)>0 else 0
-        volume   = min(total / 2.5, 1.0)
-        return (balanced * 0.6 + volume * 0.4)
-        
-    return 0.5
+    return weighted_sum / max_sum if max_sum > 0 else 0.5
 
-def _value_edge(prob, odds):
-    if not odds or odds <= 1.0: return 0.0
-    implied = 1.0 / odds
-    return (prob/100.0) - implied
+# ─── CORE ANALYSIS ────────────────────────────────────────────────────────────
 
-# -- Conviction Calculator ----------------------------------------------------
-def calculate_conviction(tip, prob, odds, h_xg, a_xg, h_form, a_form):
+def analyze_match(enriched):
     """
-    Returns a score 0-100 based on how much the Data supports the Probability.
+    The Single Source of Truth.
+    Accepts 'enriched' data from Sportmonks.
+    Returns a dictionary with 'recommended', 'safest', 'risky', and 'badges'.
     """
-    s_xg    = _xg_signal(tip, h_xg, a_xg)
-    s_form  = (form_score(h_form) + (1-form_score(a_form))) / 2 # simplified relative form
-    s_value = _value_edge(prob, odds) * 5 # Boost score if valuable
+    # 1. Extract Data
+    h_name = enriched.get("home_name", "Home")
+    a_name = enriched.get("away_name", "Away")
     
-    # Base score is the probability itself
-    score = prob 
+    # xG (The most important metric)
+    # Default to 1.25/1.05 (slightly home favored) if data is missing
+    xg_h = float(enriched.get("xg_home") or 1.25)
+    xg_a = float(enriched.get("xg_away") or 1.05)
     
-    # Modifiers
-    if s_xg > 0.6: score += 5
-    if s_xg < 0.4: score -= 10
+    # Adjust xG based on League Tier/Quality if needed (Optional)
+    # For now, we trust Sportmonks xG data.
+
+    # 2. Run Poisson Simulation (The "Thinking" Part)
+    # We calculate our OWN probabilities. We do not trust the bookie blind.
+    probs = {"1": 0, "X": 0, "2": 0, "O15": 0, "O25": 0, "BTTS": 0}
     
-    if s_value > 0.05: score += 10 # 5% value edge adds 10 points
+    home_dist = [poisson_pmf(i, xg_h) for i in range(10)]
+    away_dist = [poisson_pmf(i, xg_a) for i in range(10)]
     
-    return max(0, min(100, score))
-
-# -- The "Badge Factory" (Dynamic Personality) --------------------------------
-def generate_badges(h_prob, d_prob, a_prob, h_volatility, a_volatility, conviction, edge):
-    badges = []
-    
-    # 1. UNRELIABLE (Volatile)
-    # If teams are erratic OR conviction is low despite high prob
-    avg_volatility = (h_volatility + a_volatility) / 2
-    if avg_volatility > 0.75:
-        return "⚠️ UNRELIABLE", "Teams are too inconsistent to predict safely."
-    
-    # 2. VERSATILE (Balanced)
-    # If Home and Away are within 10% of each other
-    if abs(h_prob - a_prob) < 10:
-        return "⚖️ VERSATILE", "Tight match. Look at Goals or Double Chance."
-
-    # 3. BANKER (Solid)
-    # High conviction + Low Volatility
-    if conviction > 75 and avg_volatility < 0.4:
-        return "🛡️ BANKER", "High probability with consistent team data."
-        
-    # 4. VALUE BET
-    if edge > 0.10: # 10% edge
-        return "⚡ VALUE", "Bookies have underestimated this outcome."
-        
-    return "STANDARD", "Standard match analysis."
-
-# -- MAIN ANALYZER ------------------------------------------------------------
-def analyze_match(api_data, league_id=None, enriched=None):
-    try:
-        # 1. DATA INGESTION (The Fix)
-        # ------------------------------------------------------
-        # Prioritize 'enriched' data from Sportmonks.py
-        h_xg = 1.2 # Default
-        a_xg = 1.0 # Default
-        
-        if enriched:
-            # CHECK 1: Did we get specific stats?
-            if enriched.get("xg_home") is not None:
-                h_xg = float(enriched["xg_home"])
-            if enriched.get("xg_away") is not None:
-                a_xg = float(enriched["xg_away"])
-                
-        # Squad/Injury Penalties (Simplified Logic)
-        h_pen = 1.0
-        a_pen = 1.0
-        # If you add injury logic later, reduce h_pen here (e.g. 0.8)
-        
-        h_xg = round(h_xg * h_pen, 2)
-        a_xg = round(a_xg * a_pen, 2)
-        total_xg = h_xg + a_xg
-
-        # 2. PROBABILITY CALCULATION (Poisson)
-        # ------------------------------------------------------
-        # We recalculate probs because the API ones might be generic
-        home_matrix = [poisson_pmf(i, h_xg) for i in range(10)]
-        away_matrix = [poisson_pmf(i, a_xg) for i in range(10)]
-        
-        probs = {
-            "home_win": 0, "draw": 0, "away_win": 0,
-            "over_25": 0, "btts": 0
-        }
-        
-        for h in range(10):
-            for a in range(10):
-                p = home_matrix[h] * away_matrix[a]
-                if h > a: probs["home_win"] += p
-                elif h == a: probs["draw"] += p
-                else: probs["away_win"] += p
-                
-                if h+a > 2: probs["over_25"] += p
-                if h > 0 and a > 0: probs["btts"] += p
-
-        # Convert to percentages
-        P_HOME = probs["home_win"] * 100
-        P_DRAW = probs["draw"] * 100
-        P_AWAY = probs["away_win"] * 100
-        P_O25  = probs["over_25"] * 100
-        P_BTTS = probs["btts"] * 100
-
-        # 3. SELECTION LOGIC (The "Brain")
-        # ------------------------------------------------------
-        candidates = [
-            {"tip": "HOME WIN", "prob": P_HOME, "odds": api_data.get("odds_home")},
-            {"tip": "AWAY WIN", "prob": P_AWAY, "odds": api_data.get("odds_away")},
-            {"tip": "OVER 2.5", "prob": P_O25,  "odds": api_data.get("odds_over_25")},
-            {"tip": "BTTS",     "prob": P_BTTS, "odds": api_data.get("odds_btts_yes")},
-            {"tip": "UNDER 2.5","prob": 100-P_O25, "odds": api_data.get("odds_under_25")}
-        ]
-        
-        # Filter: Only tips > 45% prob allowed as "Recommended"
-        valid_tips = [c for c in candidates if c["prob"] > 45]
-        
-        if not valid_tips:
-            # Fallback to Double Chance if nothing is clear
-            if P_HOME > P_AWAY:
-                best_tip = {"tip": "1X (Safe)", "prob": P_HOME + P_DRAW, "odds": 1.3}
-            else:
-                best_tip = {"tip": "X2 (Safe)", "prob": P_AWAY + P_DRAW, "odds": 1.3}
-        else:
-            # Pick the one with highest Conviction (Score)
-            # We calculate conviction for each valid tip
-            for tip in valid_tips:
-                h_form = enriched.get("home_form", []) if enriched else []
-                a_form = enriched.get("away_form", []) if enriched else []
-                
-                tip["conviction"] = calculate_conviction(
-                    tip["tip"], tip["prob"], tip["odds"], 
-                    h_xg, a_xg, h_form, a_form
-                )
+    for h in range(10):
+        for a in range(10):
+            p = home_dist[h] * away_dist[a]
             
-            # Sort by Conviction (Smartest), not just Probability (Raw)
-            best_tip = max(valid_tips, key=lambda x: x["conviction"])
+            if h > a: probs["1"] += p
+            elif h == a: probs["X"] += p
+            else: probs["2"] += p
+            
+            if h + a > 1: probs["O15"] += p
+            if h + a > 2: probs["O25"] += p
+            if h > 0 and a > 0: probs["BTTS"] += p
 
-        # 4. BADGING & NARRATIVE
-        # ------------------------------------------------------
-        h_vol = calculate_volatility(enriched.get("home_form", [])) if enriched else 0.5
-        a_vol = calculate_volatility(enriched.get("away_form", [])) if enriched else 0.5
-        edge  = _value_edge(best_tip["prob"], best_tip.get("odds"))
-        
-        badge_label, badge_desc = generate_badges(
-            P_HOME, P_DRAW, P_AWAY, h_vol, a_vol, best_tip.get("conviction", 0), edge
-        )
+    # Convert to %
+    P_HOME = probs["1"] * 100
+    P_DRAW = probs["X"] * 100
+    P_AWAY = probs["2"] * 100
+    P_O25  = probs["O25"] * 100
+    P_BTTS = probs["BTTS"] * 100
 
-        return {
-            "tag": badge_label,
-            "tag_desc": badge_desc,
-            "xg_h": h_xg,
-            "xg_a": a_xg,
-            "recommended": {
-                "tip": best_tip["tip"],
-                "prob": round(best_tip["prob"], 1),
-                "odds": best_tip.get("odds", 0),
-                "conv": round(best_tip.get("conviction", 50), 0),
-                "reason": f"Model identified {best_tip['tip']} as highest value based on xG flow ({h_xg} vs {a_xg})."
-            },
-            # Keep your existing structure for Risky/Safest/etc.
-            # (You can plug your existing _pick_safest / _pick_risky functions here)
+    # 3. Analyze Volatility (The "Chaos" Check)
+    h_form = enriched.get("home_form", [])
+    a_form = enriched.get("away_form", [])
+    
+    # Convert list ["W","L"] to string "WL" if needed
+    h_form_str = "".join(h_form) if isinstance(h_form, list) else str(h_form)
+    a_form_str = "".join(a_form) if isinstance(a_form, list) else str(a_form)
+    
+    vol_h = calculate_volatility(h_form_str)
+    vol_a = calculate_volatility(a_form_str)
+    avg_vol = (vol_h + vol_a) / 2
+    
+    # 4. Generate Badges
+    badge_type = "STANDARD" # Default
+    badge_label = "MONITOR"
+    badge_desc = "Standard match analysis."
+    
+    # BADGE LOGIC TREE
+    if avg_vol > 0.70:
+        badge_type = "VOLATILE"
+        badge_label = "⚠️ VOLATILE"
+        badge_desc = "Teams are inconsistent. High risk of upset."
+    elif abs(P_HOME - P_AWAY) < 10:
+        badge_type = "VERSATILE"
+        badge_label = "⚖️ VERSATILE"
+        badge_desc = "Very tight match. Avoid Winner market."
+    elif P_HOME > 75 and avg_vol < 0.4:
+        badge_type = "BANKER"
+        badge_label = "🛡️ BANKER"
+        badge_desc = f"High confidence in {h_name}."
+    elif P_AWAY > 70 and avg_vol < 0.4:
+        badge_type = "BANKER"
+        badge_label = "🛡️ BANKER"
+        badge_desc = f"High confidence in {a_name}."
+    elif P_O25 > 65 and probs["BTTS"] > 0.60:
+        badge_type = "GOAL_FEST"
+        badge_label = "🔥 GOALS"
+        badge_desc = "High xG stats suggest an open game."
+
+    # 5. Select Tips
+    # We create a candidate list and pick the best one based on Conviction
+    
+    candidates = []
+    
+    # Helper to calc conviction (0-100)
+    def calc_conviction(prob, volatility_penalty=True):
+        score = prob
+        if volatility_penalty:
+            score -= (avg_vol * 20) # Penalize chaos
+        return min(max(score, 0), 100)
+
+    # Home Win
+    candidates.append({
+        "tip": "HOME WIN",
+        "market": "1X2",
+        "prob": P_HOME,
+        "conviction": calc_conviction(P_HOME),
+        "min_prob": 45
+    })
+    
+    # Away Win
+    candidates.append({
+        "tip": "AWAY WIN",
+        "market": "1X2",
+        "prob": P_AWAY,
+        "conviction": calc_conviction(P_AWAY),
+        "min_prob": 45
+    })
+    
+    # Over 2.5 (Less sensitive to winner volatility, so less penalty)
+    candidates.append({
+        "tip": "OVER 2.5",
+        "market": "GOALS",
+        "prob": P_O25,
+        "conviction": calc_conviction(P_O25, volatility_penalty=False) - 5, # slight handicap
+        "min_prob": 50
+    })
+    
+    # BTTS
+    candidates.append({
+        "tip": "GG (BTTS)",
+        "market": "GOALS",
+        "prob": P_BTTS,
+        "conviction": calc_conviction(P_BTTS, volatility_penalty=False),
+        "min_prob": 52
+    })
+
+    # Filter by minimum probability
+    valid_candidates = [c for c in candidates if c["prob"] >= c["min_prob"]]
+    
+    # Fallback if nothing is good
+    if not valid_candidates:
+        if P_HOME >= P_AWAY:
+            best_tip = {"tip": "1X (DC)", "prob": P_HOME + P_DRAW, "conviction": 60}
+        else:
+            best_tip = {"tip": "X2 (DC)", "prob": P_AWAY + P_DRAW, "conviction": 60}
+        reason = "Match is too tight for a straight win. Playing it safe."
+    else:
+        # Sort by Conviction
+        best_tip = max(valid_candidates, key=lambda x: x["conviction"])
+        reason = f"Model calculates {best_tip['prob']:.1f}% probability based on xG flow."
+
+    # 6. Safest & Risky Tips
+    
+    # Safest: Look for Over 1.5 or Double Chance
+    safe_candidates = [
+        {"tip": "OVER 1.5", "prob": probs["O15"] * 100},
+        {"tip": "1X", "prob": P_HOME + P_DRAW},
+        {"tip": "X2", "prob": P_AWAY + P_DRAW}
+    ]
+    # Filter out the Recommended Tip if it's the same
+    safe_candidates = [s for s in safe_candidates if s["tip"] not in best_tip["tip"]]
+    safest_tip = max(safe_candidates, key=lambda x: x["prob"])
+    
+    # Risky: Draw or Combos
+    risky_tip = {"tip": "DRAW", "prob": P_DRAW}
+    if P_HOME > 60 and P_O25 > 60:
+        risky_tip = {"tip": "1 & O2.5", "prob": P_HOME * 0.7} # rough approx
+    elif P_AWAY > 60 and P_O25 > 60:
+        risky_tip = {"tip": "2 & O2.5", "prob": P_AWAY * 0.7}
+
+    # 7. Final Payload
+    return {
+        "recommended": {
+            "tip": best_tip["tip"],
+            "prob": round(best_tip["prob"], 1),
+            "conviction": round(best_tip.get("conviction", 50), 0),
+            "reason": reason,
+            "fair_odds": round(100/max(best_tip["prob"],1), 2)
+        },
+        "safest": {
+            "tip": safest_tip["tip"],
+            "prob": round(safest_tip["prob"], 1),
+            "fair_odds": round(100/max(safest_tip["prob"],1), 2)
+        },
+        "risky": {
+            "tip": risky_tip["tip"],
+            "prob": round(risky_tip["prob"], 1),
+            "fair_odds": round(100/max(risky_tip["prob"],1), 2)
+        },
+        "badges": {
+            "label": badge_label,
+            "type": badge_type,
+            "desc": badge_desc,
+            "volatility": round(avg_vol, 2)
+        },
+        "data": {
+            "xg_h": round(xg_h, 2),
+            "xg_a": round(xg_a, 2),
+            "home_win_prob": round(P_HOME, 1),
+            "away_win_prob": round(P_AWAY, 1),
+            "draw_prob": round(P_DRAW, 1)
         }
-
-    except Exception as e:
-        print(f"Error analyzing match: {e}")
-        return None
+    }
