@@ -1,63 +1,59 @@
-@app.route("/match/<int:match_id>")
-def match_page(match_id):
-    try:
-        # 1. FETCH GOD MODE DATA
-        data = sportmonks.get_match_details(match_id)
-        if not data:
-            return render_template_string(LAYOUT, content='<div class="empty">Match data unavailable. API limit or ID error.</div>', page="match")
-            
-        # 2. RUN BRAIN
-        analysis = match_predictor.analyze_match(data)
-        if not analysis:
-            return render_template_string(LAYOUT, content='<div class="empty">Not enough data to generate Smart Prediction.</div>', page="match")
+"""
+scheduler.py -- Automation Engine
+"""
+import sportmonks
+import match_predictor
+import database
 
-        tips = analysis['tips']
-        rec = tips.get('recommended') or {"selection": "--", "prob": 0, "odds": 0}
-        safe = tips.get('safest') or {"selection": "--", "prob": 0, "odds": 0}
-        risky = tips.get('risky') or {"selection": "--", "prob": 0, "odds": 0}
-
-        # 3. RENDER UI
-        # (I am injecting the values directly into your existing high-end HTML structure)
+def run_morning_job():
+    print("Running GOD MODE Morning Analysis...")
+    
+    # 1. Get All Fixtures
+    matches = sportmonks.get_fixtures_today()
+    if not matches:
+        return {"status": "empty", "message": "No matches today"}
         
-        content = f'''
-        <div class="match-hero up">
-            <div class="match-league">PREMIER LEAGUE</div> <div class="match-teams">
-                <div class="team-block"><div class="team-name">{analysis['teams']['home']}</div></div>
-                <div class="vs-block"><div class="vs-sep">VS</div></div>
-                <div class="team-block"><div class="team-name">Away</div></div>
-            </div>
-        </div>
-
-        <div class="pred-card reliable up d1">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
-                <div>
-                    <div style="font-size:.52rem;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:var(--t2);margin-bottom:5px">⚡ RECOMMENDED (VALUE)</div>
-                    <div class="tip-main" style="color:var(--g)">{rec['selection']}</div>
-                    <div class="tip-prob">{rec['prob']}% Prob &middot; Odds <span style="color:var(--gold)">{rec['odds']}</span></div>
-                </div>
-                <span class="badge bg-green">VALUE</span>
-            </div>
-            <div class="tip-reason">{analysis['analysis']}</div>
-        </div>
-
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:8px" class="up d2">
+    count = 0
+    errors = 0
+    
+    for m in matches:
+        try:
+            # 2. Fetch The Super Packet
+            data = sportmonks.get_match_details(m['id'])
+            if not data: continue
             
-            <div class="card" style="margin:0;border-color:rgba(79,142,247,.25);background:linear-gradient(135deg,rgba(79,142,247,.07),transparent)">
-                <div class="card-title">🛡️ BANKER</div>
-                <div style="font-size:.9rem;font-weight:900;color:var(--b);line-height:1.2">{safe['selection']}</div>
-                <div style="font-size:.62rem;color:var(--t2);margin-top:3px">{safe['prob']}% &middot; {safe['odds']}</div>
-            </div>
+            # 3. Analyze
+            res = match_predictor.analyze_match(data)
+            if not res: continue
+            
+            tips = res['tips']
+            rec = tips.get('recommended')
+            
+            # 4. Save to DB (Primary Tip)
+            # You can expand database.log_prediction to take safest/risky too if you want
+            if rec:
+                database.log_prediction(
+                    match_id=m['id'],
+                    league_id=m.get('league_id', 0),
+                    league_name="Unknown", # You can fetch league name if needed
+                    home_team=res['teams']['home'],
+                    away_team="Away",
+                    match_date=m.get('starting_at', ''),
+                    market=rec['type'],
+                    probability=rec['prob'],
+                    fair_odds=rec['odds'],
+                    confidence=rec['prob'], # Use prob as confidence
+                    xg_home=0, xg_away=0, # Placeholder if no xG
+                    tag="VALUE" if rec['ev'] > 0 else "STANDARD"
+                )
+                count += 1
+                
+        except Exception as e:
+            print(f"Error on match {m.get('id')}: {e}")
+            errors += 1
+            
+    return {"status": "success", "analyzed": count, "errors": errors}
 
-            <div class="card" style="margin:0;border-color:rgba(255,69,58,.25);background:linear-gradient(135deg,rgba(255,69,58,.07),transparent)">
-                <div class="card-title">💣 HIGH REWARD</div>
-                <div style="font-size:.9rem;font-weight:900;color:var(--r);line-height:1.2">{risky['selection']}</div>
-                <div style="font-size:.62rem;color:var(--t2);margin-top:3px">{risky['prob']}% &middot; {risky['odds']}</div>
-            </div>
-        </div>
-        '''
-
-        return render_template_string(LAYOUT, content=content, page="match")
-
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        return render_template_string(LAYOUT, content=f'<div class="empty">System Error: {str(e)}</div>', page="match")
+def run_settlement_job():
+    # Placeholder for settlement logic
+    return {"status": "success", "message": "Settlement not implemented in this snippet"}
